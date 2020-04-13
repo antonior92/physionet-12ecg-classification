@@ -25,7 +25,7 @@ def resample_ecg(trace, input_freq, output_freq):
 
 
 class ECGDataset(object):
-    def __init__(self, input_folder, classes=CLASSES, freq=500):
+    def __init__(self, input_folder, freq=500, classes=CLASSES):
         # Save classes
         self.classes = classes
         self.class_to_idx = dict(zip(classes, range(len(classes))))
@@ -106,7 +106,6 @@ class ECGDataset(object):
         if isinstance(idx, int):
             return self._getsample(idx)
         elif isinstance(idx, slice):
-            print(idx)
             return [self._getsample(i) for i in itertools.islice(range(len(self)), idx.start, idx.stop, idx.step)]
         else:
             raise IndexError()
@@ -172,4 +171,4 @@ if __name__ == '__main__':
 
     samples = to_dict_of_lists(list(itertools.chain(*[split_long_signals(s) for s in ecg_dataset[:10]])))
     dataset = apply_to_all_dict_values(samples, np.stack)
-    print(apply_to_all_dict_values(), np.stack)
+    print(apply_to_all_dict_values(dataset, np.stack))
