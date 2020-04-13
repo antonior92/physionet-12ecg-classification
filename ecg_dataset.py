@@ -2,6 +2,7 @@ import numpy as np
 import os, sys
 from scipy.io import loadmat
 from scipy.signal import decimate, resample_poly
+import itertools
 
 CLASSES = ['AF', 'I-AVB', 'LBBB', 'Normal', 'PAC', 'PVC', 'RBBB', 'STD', 'STE']
 
@@ -38,10 +39,13 @@ class ECGDataset(object):
         self.input_folder = input_folder
         self.freq = freq
 
+    def get_ids(self):
+        return [int(f.split('A')[-1].split('.mat')[0]) for f in self.input_file]
+
     def __len__(self):
         return len(self.input_file)
 
-    def __getitem__(self, idx):
+    def _getsample(self, idx):
         filename = os.path.join(self.input_folder, self.input_file[idx])
 
         x = loadmat(filename)
@@ -98,6 +102,15 @@ class ECGDataset(object):
 
         return {'id': id, 'data': data_with_gain, 'age': age, 'is_male': is_male, 'output': output}
 
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            return self._getsample(idx)
+        elif isinstance(idx, slice):
+            print(idx)
+            return [self._getsample(i) for i in itertools.islice(range(len(self)), idx.start, idx.stop, idx.step)]
+        else:
+            raise IndexError()
+
 
 def split_long_signals(sample, length=4096, min_length=2000):
     idx, data, age, is_male, output = sample['id'], sample['data'], sample['age'], sample['is_male'],  sample['output']
@@ -125,6 +138,21 @@ def split_long_signals(sample, length=4096, min_length=2000):
     return list_subsamples
 
 
+def to_dict_of_lists(list_of_dicts):
+    """Convert list of dict to dict of list"""
+    keys = list_of_dicts[0].keys()
+    dict_of_lists = {k: [] for k in keys}
+    for d in list_of_dicts:
+        for k, v in d.items():
+            dict_of_lists[k].append(v)
+    return dict_of_lists
+
+
+def apply_to_all_dict_values(d, fn):
+    """Apply function to all dict values"""
+    return {k: fn(v) for k, v in d.items()}
+
+
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     ecg_dataset = ECGDataset('./Training_WFDB', freq=400)
@@ -139,3 +167,9 @@ if __name__ == '__main__':
         print(x['split'])
         plt.plot(x['data'][:, 0])
         plt.show()
+
+    print(ecg_dataset.get_ids())
+
+    samples = to_dict_of_lists(list(itertools.chain(*[split_long_signals(s) for s in ecg_dataset[:10]])))
+    dataset = apply_to_all_dict_values(samples, np.stack)
+    print(apply_to_all_dict_values(), np.stack)
