@@ -7,6 +7,78 @@ from warnings import warn
 from ecg_dataset import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
+from metrics import get_threshold, get_metrics
+
+
+# %% Train model
+def train(ep, model, optimizer, train_samples, ll, n_classes, device):
+    model.train()
+    total_loss = 0
+    n_entries = 0
+    n_train_final = len(train_samples)
+    train_desc = "Epoch {:2d}: train - Loss: {:.6f}"
+    train_bar = tqdm(initial=0, leave=True, total=n_train_final,
+                     desc=train_desc.format(ep, 0), position=0)
+    for i in range(n_train_batches):
+        # Send to device
+        bs = min(args.batch_size, n_train_final - n_entries + 1)
+        samples = train_samples[n_entries:n_entries+bs]
+        traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
+        target = torch.stack([torch.tensor(s['output'], dtype=torch.float32, device=device) for s in samples], dim=0)
+        # Reinitialize grad
+        model.zero_grad()
+        # Forward pass
+        output = model(traces.transpose(2, 1))
+        loss = ll(output, target)
+        # Backward pass
+        loss.backward()
+        # Optimize
+        optimizer.step()
+        # Update
+        total_loss += loss.detach().cpu().numpy() / n_classes
+        n_entries += bs
+        # Update train bar
+        train_bar.desc = train_desc.format(ep, total_loss / n_entries)
+        train_bar.update(bs)
+    train_bar.close()
+    return total_loss / n_entries
+
+
+def eval(ep, model, valid_samples, ll, output_layer, n_classes, device):
+    model.eval()
+    total_loss = 0
+    n_entries = 0
+    all_outputs = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
+    all_targets = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
+    all_ids = np.zeros(len(valid_samples), dtype=int)
+    eval_desc = "Epoch {0:2d}: valid - Loss: {1:.6f}" if ep >= 0 \
+        else "{valid - Loss: {1:.6f}"
+    eval_bar = tqdm(initial=0, leave=True, total=len(valid_samples),
+                    desc=eval_desc.format(ep, 0), position=0)
+    for i, samples in enumerate(valid_samples):
+        with torch.no_grad():
+            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
+            target = torch.tensor(samples[0]['output'], dtype=torch.float32, device=device)
+            id = samples[0]['id']
+            # Forward pass
+            output = model(traces.transpose(2, 1))
+            # Collapse along dim=0 (TODO: try different collapsing functions here)
+            output = output_layer(output).mean(dim=0)
+            # Loss
+            loss = ll(output, target)
+            # Add outputs
+            all_outputs[i, :] = output.detach().cpu().numpy()
+            all_targets[i, :] = target.detach().cpu().numpy()
+            all_ids[i] = id
+            # Update ids
+            total_loss += loss.detach().cpu().numpy() / n_classes
+            n_entries += 1
+            # Print result
+            eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
+            eval_bar.update(1)
+    eval_bar.close()
+    return total_loss / n_entries, all_outputs, all_targets, all_ids
+
 
 if __name__ == '__main__':
     # Experiment parameters
@@ -87,8 +159,8 @@ if __name__ == '__main__':
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
     # Define dataset
-    train_samples = list(itertools.chain(*[split_long_signals(s) for s in dset[:n_train]]))
-    valid_samples = [split_long_signals(s, length=args.seq_length) for s in dset[n_train:]]
+    train_samples = list(itertools.chain(*[split_long_signals(s) for s in dset[:10]]))
+    valid_samples = [split_long_signals(s, length=args.seq_length) for s in dset[10:20]]
     # Get number of batches
     n_train_final = len(train_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
@@ -116,40 +188,28 @@ if __name__ == '__main__':
 
     tqdm.write("Define scheduler...")
     ll = torch.nn.BCEWithLogitsLoss(reduction='sum')
+    output_layer = torch.nn.Sigmoid()
     tqdm.write("Done!")
 
-    # %% Train model
-    def train(ep):
-        model.train()
-        total_loss = 0
-        n_entries = 0
-        train_desc = "Epoch {:2d}: train - Loss: {:.6f}"
-        train_bar = tqdm(initial=0, leave=True, total=len(train_samples),
-                         desc=train_desc.format(ep, 0), position=0)
-        for i in range(n_train_batches):
-            # Send to device
-            bs = min(args.batch_size, n_train_final - n_entries + 1)
-            samples = train_samples[n_entries:n_entries+bs]
-            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
-            target = torch.stack([torch.tensor(s['output'], dtype=torch.float32, device=device) for s in samples], dim=0)
-            # Reinitialize grad
-            model.zero_grad()
-            # Forward pass
-            output = model(traces.transpose(2, 1))
-            loss = ll(output, target)
-            # Backward pass
-            loss.backward()
-            # Optimize
-            optimizer.step()
-            # Update
-            total_loss += loss.detach().cpu().numpy() / n_classes
-            n_entries += bs
-            # Update train bar
-            train_bar.desc = train_desc.format(ep, total_loss / n_entries)
-            train_bar.update(bs)
-        train_bar.close()
-        return total_loss / n_entries
-
     for ep in range(args.epochs):
-        train_loss = train(ep)
+        # Train and evaluate
+        train_loss = train(ep, model, optimizer, train_samples, ll, n_classes, device)
+        valid_loss, y_score, y_true, aids = eval(ep, model, valid_samples, ll, output_layer,
+                                                            n_classes, device)
+        # Get learning rate
+        for param_group in optimizer.param_groups:
+            learning_rate = param_group["lr"]
+        # Interrupt for minimum learning rate
+        if learning_rate < args.min_lr:
+            break
+        # Get metrics
+        _, _, threshold = get_threshold(y_true, y_score)
+        y_pred = y_score > threshold
+        metrics = get_metrics(y_true, y_pred)
+        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
+                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
+                   'Fbeta: {:.3f} \tGbeta: {:.3f}' \
+            .format(ep, train_loss, valid_loss, learning_rate,
+                    metrics['f_beta'], metrics['g_beta'])
+        tqdm.write(message)
 
