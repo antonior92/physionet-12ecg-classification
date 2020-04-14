@@ -44,7 +44,7 @@ def compute_beta_score(labels, output,  beta=2, check_errors=True):
     accuracy = 0
 
     # Weight function
-    C_l = np.ones(num_classes);
+    C_l = np.ones(num_classes)
     for j in range(num_classes):
         tp = 0
         fp = 0
