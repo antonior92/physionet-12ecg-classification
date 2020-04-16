@@ -44,12 +44,13 @@ def train(ep, model, optimizer, train_samples, ll, n_classes, device):
     return total_loss / n_entries
 
 
-def eval(ep, model, valid_samples, ll, output_layer, n_classes, device):
+def evaluate(ep, model, valid_samples, output_layer, n_classes, device, seq_length, ll=None):
     model.eval()
     total_loss = 0
     n_entries = 0
     all_outputs = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
-    all_targets = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
+    if ll is not None:
+        all_targets = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
     all_ids = np.zeros(len(valid_samples), dtype=int)
     eval_desc = "Epoch {0:2d}: valid - Loss: {1:.6f}" if ep >= 0 \
         else "{valid - Loss: {1:.6f}"
@@ -57,28 +58,31 @@ def eval(ep, model, valid_samples, ll, output_layer, n_classes, device):
                     desc=eval_desc.format(ep, 0), position=0)
     for i, samples in enumerate(valid_samples):
         with torch.no_grad():
-            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
-            target = torch.tensor(samples[0]['output'], dtype=torch.float32, device=device)
-            id = samples[0]['id']
+            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
+                                  split_long_signals(samples, length=seq_length)], dim=0)
+            id = samples['id']
             # Forward pass
-            output = model(traces.transpose(2, 1))
+            logits = model(traces.transpose(2, 1)).mean(dim=0)
             # Collapse along dim=0 (TODO: try different collapsing functions here)
-            output = output_layer(output).mean(dim=0)
-            # Loss
-            loss = ll(output, target)
+            output = output_layer(logits)
+            if ll is not None:
+                target = torch.tensor(samples['output'], dtype=torch.float32, device=device)
+                all_targets[i, :] = target.detach().cpu().numpy()
+                # Loss
+                loss = ll(logits, target)
+                total_loss += loss.detach().cpu().numpy() / n_classes
             # Add outputs
             all_outputs[i, :] = output.detach().cpu().numpy()
-            all_targets[i, :] = target.detach().cpu().numpy()
             all_ids[i] = id
-            # Update ids
-            total_loss += loss.detach().cpu().numpy() / n_classes
             n_entries += 1
             # Print result
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
             eval_bar.update(1)
     eval_bar.close()
-    return total_loss / n_entries, all_outputs, all_targets, all_ids
-
+    if ll is not None:
+        return total_loss / n_entries, all_outputs, all_targets, all_ids
+    else:
+        return all_outputs, all_ids
 
 if __name__ == '__main__':
     # Experiment parameters
@@ -112,6 +116,9 @@ if __name__ == '__main__':
                                help='dropout rate (default: 0.8).')
     config_parser.add_argument('--kernel_size', type=int, default=17,
                                help='kernel size in convolutional layers (default: 17).')
+    config_parser.add_argument('--n_total', type=int, default=-1,
+                               help='number of samples to be used during training. By default use '
+                                    'all the samples available. Useful for quick tests.')
 
     args, rem_args = config_parser.parse_known_args()
     # System setting
@@ -155,12 +162,12 @@ if __name__ == '__main__':
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
     # Get length
     n_classes = len(CLASSES)
-    n_total = len(dset)
+    n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
     # Define dataset
-    train_samples = list(itertools.chain(*[split_long_signals(s) for s in dset[:10]]))
-    valid_samples = [split_long_signals(s, length=args.seq_length) for s in dset[10:20]]
+    train_samples = list(itertools.chain(*[split_long_signals(s) for s in dset[:n_train]]))
+    valid_samples = dset[n_train:n_total]
     # Get number of batches
     n_train_final = len(train_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
@@ -186,16 +193,30 @@ if __name__ == '__main__':
                                                            factor=args.lr_factor)
     tqdm.write("Done!")
 
-    tqdm.write("Define scheduler...")
+    tqdm.write("Define loss...")
     ll = torch.nn.BCEWithLogitsLoss(reduction='sum')
     output_layer = torch.nn.Sigmoid()
     tqdm.write("Done!")
 
+    best_loss = np.Inf
     for ep in range(args.epochs):
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_samples, ll, n_classes, device)
-        valid_loss, y_score, y_true, aids = eval(ep, model, valid_samples, ll, output_layer,
-                                                            n_classes, device)
+        valid_loss, y_score, y_true, ids = evaluate(ep, model, valid_samples, output_layer,
+                                                    n_classes, device, args.seq_length, ll)
+        # Get threshold
+        _, _, threshold = get_threshold(y_true, y_score)
+        # Save best model
+        if valid_loss < best_loss:
+            tqdm.write("Save model!")
+            # Save model
+            torch.save({'epoch': ep,
+                        'threshold': threshold,
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict()},
+                       os.path.join(folder, 'model.pth'))
+            # Update best validation loss
+            best_loss = valid_loss
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
