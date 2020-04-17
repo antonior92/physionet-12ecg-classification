@@ -28,7 +28,7 @@ def train(ep, model, optimizer, train_samples, ll, n_classes, device):
         # Reinitialize grad
         model.zero_grad()
         # Forward pass
-        output = model(traces.transpose(2, 1))
+        output = model(traces)
         loss = ll(output, target)
         # Backward pass
         loss.backward()
@@ -62,7 +62,7 @@ def evaluate(ep, model, valid_samples, output_layer, n_classes, device, seq_leng
                                   split_long_signals(samples, length=seq_length)], dim=0)
             id = samples['id']
             # Forward pass
-            logits = model(traces.transpose(2, 1)).mean(dim=0)
+            logits = model(traces).mean(dim=0)
             # Collapse along dim=0 (TODO: try different collapsing functions here)
             output = output_layer(logits)
             if ll is not None:
@@ -83,6 +83,7 @@ def evaluate(ep, model, valid_samples, output_layer, n_classes, device, seq_leng
         return total_loss / n_entries, all_outputs, all_targets, all_ids
     else:
         return all_outputs, all_ids
+
 
 if __name__ == '__main__':
     # Experiment parameters
