@@ -1,59 +1,123 @@
-import os
-import json
-import torch
-import argparse
-import datetime
-from warnings import warn
-from ecg_dataset import *
-from tqdm import tqdm
-from models.resnet import ResNet1d
-from metrics import get_threshold, get_metrics
-from train import evaluate
+#!/usr/bin/env python
+
+import numpy as np, os, sys
+from scipy.io import loadmat
+from run_12ECG_classifier import load_12ECG_model, run_12ECG_classifier
+
+def load_challenge_data(filename):
+
+
+    x = loadmat(filename)
+    data = np.asarray(x['val'], dtype=np.float64)
+
+    new_file = filename.replace('.mat','.hea')
+    input_header_file = os.path.join(new_file)
+
+    with open(input_header_file,'r') as f:
+        header_data=f.readlines()
+
+
+    return data, header_data
+
+
+def save_challenge_predictions(output_directory,filename,scores,labels,classes):
+
+    recording = os.path.splitext(filename)[0]
+    new_file = filename.replace('.mat','.csv')
+    output_file = os.path.join(output_directory,new_file)
+
+    # Include the filename as the recording number
+    recording_string = '#{}'.format(recording)
+    class_string = ','.join(classes)
+    label_string = ','.join(str(i) for i in labels)
+    score_string = ','.join(str(i) for i in scores)
+
+    with open(output_file, 'w') as f:
+        f.write(recording_string + '\n' + class_string + '\n' + label_string + '\n' + score_string + '\n')
+
+
+# Find unique number of classes
+def get_classes(input_directory,files):
+
+    classes=set()
+    for f in files:
+        g = f.replace('.mat','.hea')
+        input_file = os.path.join(input_directory,g)
+        with open(input_file,'r') as f:
+            for lines in f:
+                if lines.startswith('#Dx'):
+                    tmp = lines.split(': ')[1].split(',')
+                    for c in tmp:
+                        classes.add(c.strip())
+
+    return sorted(classes)
+
+
+# Find unique number of classes  
+def get_classes(input_directory,files):
+
+    classes=set()
+    for f in files:
+        g = f.replace('.mat','.hea')
+        input_file = os.path.join(input_directory,g)
+        with open(input_file,'r') as f:
+            for lines in f:
+                if lines.startswith('#Dx'):
+                    tmp = lines.split(': ')[1].split(',')
+                    for c in tmp:
+                        classes.add(c.strip())
+
+    return sorted(classes)
 
 
 if __name__ == '__main__':
-    # Get arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
-                            help='input folder.')
-    parser.add_argument('--cuda', action='store_true',
-                            help='use cuda for computations. (default: False)')
-    parser.add_argument('--folder', default=os.path.join(os.getcwd(), 'mdl/'),
-                        help='folder to load mdl config and weights')
-    args, unk = parser.parse_known_args()
+    # Parse arguments.
+    if len(sys.argv) != 3:
+        raise Exception('Include the input and output directories as arguments, e.g., python driver.py input output.')
 
-    # Load check point
-    ckpt = torch.load(os.path.join(args.folder, 'model.pth'), map_location=lambda storage, loc: storage)
+    input_directory = sys.argv[1]
+    output_directory = sys.argv[2]
 
-    # Get config
-    config = os.path.join(args.folder, 'config.json')
-    with open(config, 'r') as f:
-        config_dict = json.load(f)
+    # Find files.
+    input_files = []
+    for f in os.listdir(input_directory):
+        if os.path.isfile(os.path.join(input_directory, f)) and not f.lower().startswith('.') and f.lower().endswith('mat'):
+            input_files.append(f)
 
-    # Set device
-    device = torch.device('cuda:0' if args.cuda else 'cpu')
+    if not os.path.isdir(output_directory):
+        os.mkdir(output_directory)
 
-    # Get dataset
-    n_classes = len(CLASSES)
-    dset = ECGDataset(args.input_folder, freq=config_dict['sample_freq'])[:10]
+    classes=get_classes(input_directory,input_files)
+    print(classes)
 
-    # Define model
-    N_LEADS = 12
-    model = ResNet1d(input_dim=(N_LEADS, config_dict['seq_length']),
-                     blocks_dim=list(zip(config_dict['net_filter_size'],
-                                     config_dict['net_seq_lengh'])),
-                     n_classes=n_classes,
-                     kernel_size=config_dict['kernel_size'],
-                     dropout_rate=config_dict['dropout_rate'])
-    model.load_state_dict(ckpt["model"])
-    model.to(device=device)
+    # Load mdl.
+    print('Loading 12ECG mdl...')
+    model = load_12ECG_model()
 
-    # Define output layer
-    output_layer = torch.nn.Sigmoid()
+    # Iterate over files.
+    print('Extracting 12ECG features...')
+    num_files = len(input_files)
 
-    # Evaluate model
-    y_score, ids = evaluate(0, model, dset, output_layer,
-                            n_classes, device, config_dict['seq_length'])
+    n = []
+    header_data_list = []
+    for i, f in enumerate(input_files):
+        print('    {}/{}...'.format(i+1, num_files))
+        tmp_input_file = os.path.join(input_directory,f)
+        data,header_data = load_challenge_data(tmp_input_file)
+        n += [data.shape[1]]
+        header_data_list += [header_data]
+        current_label, current_score = run_12ECG_classifier(data,header_data,classes, model)
+        # Save results.
+        save_challenge_predictions(output_directory,f,current_score,current_label,classes)
 
+    print(n)
 
+    print('Done.')
 
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    ids = np.argsort(n)
+
+    sns.distplot(n)
+    plt.show()

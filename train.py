@@ -58,6 +58,7 @@ def evaluate(ep, model, valid_samples, output_layer, n_classes, device, seq_leng
                     desc=eval_desc.format(ep, 0), position=0)
     for i, samples in enumerate(valid_samples):
         with torch.no_grad():
+            # Compute model
             traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
                                   split_long_signals(samples, length=seq_length)], dim=0)
             id = samples['id']

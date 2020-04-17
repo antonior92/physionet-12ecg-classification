@@ -50,7 +50,8 @@ def get_sample(data, header_data, new_freq):
         output = np.zeros(len(CLASSES))
 
         for l in labels:
-            output[class_to_idx[l]] = 1
+            if l in CLASSES:
+                output[class_to_idx[l]] = 1
 
         # Get header data
         tmp_hea = header_data[0].split(' ')
@@ -91,7 +92,6 @@ class ECGDataset(object):
         return len(self.input_file)
 
     def _getsample(self, idx):
-
         filename = os.path.join(self.input_folder, self.input_file[idx])
 
         x = loadmat(filename)
@@ -134,7 +134,7 @@ def split_long_signals(sample, length=4096, min_length=2000):
             pad = (length - actual_length) // 2
             x[:, pad:pad+actual_length] = data[:, start_i:start_i + actual_length]
             start_i += actual_length
-        # Instanciate dicst with data
+        # Instanciate dict with data
         list_subsamples.append({'id': idx, 'split': ii, 'n_splits': n_splits, 'data': x,
                                'age': age, 'is_male': is_male, 'output': output})
     return list_subsamples
