@@ -91,7 +91,7 @@ if __name__ == '__main__':
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
-    config_parser.add_argument('--epochs', type=int, default=70,
+    config_parser.add_argument('--epochs', type=int, default=500,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
@@ -104,12 +104,11 @@ if __name__ == '__main__':
                                help='fraction of the data used for validation (default: 0.1).')
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
-    config_parser.add_argument("--patience", type=int, default=7,
-                               help='maximum number of epochs without reducing the learning rate (default: 7)')
-    config_parser.add_argument("--min_lr", type=float, default=1e-7,
-                               help='minimum learning rate (default: 1e-7)')
+    config_parser.add_argument('--milestones', nargs='+', type=int,
+                               default=[100, 250, 400],
+                               help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
-                               help='reducing factor for the lr in a plateu (default: 0.1)')
+                               help='reducing factor for the lr in a plateeu (default: 0.1)')
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
     config_parser.add_argument('--net_seq_lengh', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
@@ -190,9 +189,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define scheduler...")
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=args.patience,
-                                                           min_lr=args.lr_factor*args.min_lr,
-                                                           factor=args.lr_factor)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=args.lr_factor)
     tqdm.write("Done!")
 
     tqdm.write("Define loss...")
@@ -200,7 +197,7 @@ if __name__ == '__main__':
     output_layer = torch.nn.Sigmoid()
     tqdm.write("Done!")
 
-    best_loss = np.Inf
+    best_geom_mean = -np.Inf
     for ep in range(args.epochs):
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_samples, ll, n_classes, device)
@@ -208,9 +205,21 @@ if __name__ == '__main__':
                                                     n_classes, device, args.seq_length, ll)
         # Get threshold
         _, _, threshold = get_threshold(y_true, y_score)
+        # Get learning rate
+        for param_group in optimizer.param_groups:
+            learning_rate = param_group["lr"]
+        # Get metrics
+        _, _, threshold = get_threshold(y_true, y_score)
+        y_pred = y_score > threshold
+        metrics = get_metrics(y_true, y_pred)
+        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
+                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
+                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \
+            .format(ep, train_loss, valid_loss, learning_rate,
+                    metrics['f_beta'], metrics['g_beta'],
+                    metrics['geom_mean'])
         # Save best model
-        if valid_loss < best_loss:
-            tqdm.write("Save model!")
+        if best_geom_mean < metrics['geom_mean']:
             # Save model
             torch.save({'epoch': ep,
                         'threshold': threshold,
@@ -218,21 +227,15 @@ if __name__ == '__main__':
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'model.pth'))
             # Update best validation loss
-            best_loss = valid_loss
-        # Get learning rate
-        for param_group in optimizer.param_groups:
-            learning_rate = param_group["lr"]
-        # Interrupt for minimum learning rate
-        if learning_rate < args.min_lr:
-            break
-        # Get metrics
-        _, _, threshold = get_threshold(y_true, y_score)
-        y_pred = y_score > threshold
-        metrics = get_metrics(y_true, y_pred)
-        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
-                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                   'Fbeta: {:.3f} \tGbeta: {:.3f}' \
-            .format(ep, train_loss, valid_loss, learning_rate,
-                    metrics['f_beta'], metrics['g_beta'])
+            best_geom_mean = metrics['geom_mean']
+            tqdm.write("Save model!")
         tqdm.write(message)
+        # Call optimizer step
+        scheduler.step()
 
+torch.save({'epoch': ep,
+            'threshold': threshold,
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict()},
+           os.path.join(folder, 'final_model.pth'))
+tqdm.write("Save model!")
