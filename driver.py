@@ -113,11 +113,3 @@ if __name__ == '__main__':
     print(n)
 
     print('Done.')
-
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    ids = np.argsort(n)
-
-    sns.distplot(n)
-    plt.show()

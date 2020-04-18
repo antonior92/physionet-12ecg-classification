@@ -23,8 +23,8 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
                               split_long_signals(sample, length=config_dict['seq_length'])], dim=0)
         logits = model(traces).mean(dim=0)
-        y_pred = output_layer(logits).detach().cpu().numpy()
-        y_score = y_pred > threshold
+        y_score = output_layer(logits).detach().cpu().numpy()
+        y_pred = (y_score > threshold).astype(int)
 
     return y_pred, y_score
 
