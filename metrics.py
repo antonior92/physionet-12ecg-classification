@@ -92,4 +92,7 @@ def compute_beta_score(labels, output,  beta=2, check_errors=True):
 def get_metrics(y_true, y_pred):
     """Return dictionary with relevant metrics"""
     accuracy, f_measure, f_beta, g_beta = compute_beta_score(y_true, y_pred,  beta=2, check_errors=True)
-    return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta}
+
+    geometric_mean = np.sqrt(f_beta*g_beta)
+
+    return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta, 'geom_mean': geometric_mean}
