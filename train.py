@@ -3,6 +3,7 @@ import json
 import torch
 import argparse
 import datetime
+import pandas as pd
 from warnings import warn
 from ecg_dataset import *
 from tqdm import tqdm
@@ -91,7 +92,7 @@ if __name__ == '__main__':
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
-    config_parser.add_argument('--epochs', type=int, default=500,
+    config_parser.add_argument('--epochs', type=int, default=200,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
@@ -105,7 +106,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
-                               default=[100, 250, 400],
+                               default=[75, 125, 175],
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
@@ -197,6 +198,7 @@ if __name__ == '__main__':
     output_layer = torch.nn.Sigmoid()
     tqdm.write("Done!")
 
+    history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
     best_geom_mean = -np.Inf
     for ep in range(args.epochs):
         # Train and evaluate
@@ -211,6 +213,7 @@ if __name__ == '__main__':
         # Get metrics
         _, _, threshold = get_threshold(y_true, y_score)
         y_pred = y_score > threshold
+        # Print message
         metrics = get_metrics(y_true, y_pred)
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
@@ -218,6 +221,15 @@ if __name__ == '__main__':
             .format(ep, train_loss, valid_loss, learning_rate,
                     metrics['f_beta'], metrics['g_beta'],
                     metrics['geom_mean'])
+
+        tqdm.write(message)
+        # Save history
+        history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
+                                  "lr": learning_rate, "f_beta": metrics['f_beta'],
+                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean']},
+                                 ignore_index=True)
+        history.to_csv(os.path.join(folder, 'history.csv'), index=False)
+
         # Save best model
         if best_geom_mean < metrics['geom_mean']:
             # Save model
@@ -229,13 +241,14 @@ if __name__ == '__main__':
             # Update best validation loss
             best_geom_mean = metrics['geom_mean']
             tqdm.write("Save model!")
-        tqdm.write(message)
         # Call optimizer step
         scheduler.step()
 
-torch.save({'epoch': ep,
-            'threshold': threshold,
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict()},
-           os.path.join(folder, 'final_model.pth'))
-tqdm.write("Save model!")
+        # Save last model
+        if ep == args.epochs - 1:
+            torch.save({'threshold': threshold,
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict()},
+                       os.path.join(folder, 'final_model.pth'))
+            tqdm.write("Save model!")
+
