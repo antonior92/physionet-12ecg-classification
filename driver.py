@@ -6,7 +6,6 @@ from run_12ECG_classifier import load_12ECG_model, run_12ECG_classifier
 
 def load_challenge_data(filename):
 
-
     x = loadmat(filename)
     data = np.asarray(x['val'], dtype=np.float64)
 
@@ -46,28 +45,25 @@ def get_classes(input_directory,files):
         with open(input_file,'r') as f:
             for lines in f:
                 if lines.startswith('#Dx'):
-                    tmp = lines.split(': ')[1].split(',')
-                    for c in tmp:
-                        classes.add(c.strip())
+                    tmp = lines.split(': ')[1].strip()#.split(',')
+                    classes.add(tmp.strip())
+                    #for c in tmp:
+                    #    classes.add(c.strip())
 
     return sorted(classes)
 
+def count_number_of_classes(input_directory,files, classes):
 
-# Find unique number of classes  
-def get_classes(input_directory,files):
-
-    classes=set()
+    d_classes = dict(zip(classes, len(classes)*[0]))
     for f in files:
         g = f.replace('.mat','.hea')
         input_file = os.path.join(input_directory,g)
         with open(input_file,'r') as f:
             for lines in f:
                 if lines.startswith('#Dx'):
-                    tmp = lines.split(': ')[1].split(',')
-                    for c in tmp:
-                        classes.add(c.strip())
-
-    return sorted(classes)
+                    tmp = lines.split(': ')[1].strip()#.split(',')
+                    d_classes[tmp] += 1
+    return d_classes
 
 
 if __name__ == '__main__':
@@ -88,7 +84,8 @@ if __name__ == '__main__':
         os.mkdir(output_directory)
 
     classes=get_classes(input_directory,input_files)
-    print(classes)
+    d_classes = count_number_of_classes(input_directory,input_files, classes)
+    print(classes, d_classes)
 
     # Load mdl.
     print('Loading 12ECG mdl...')

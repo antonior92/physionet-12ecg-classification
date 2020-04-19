@@ -4,7 +4,28 @@ from scipy.io import loadmat
 from scipy.signal import decimate, resample_poly
 import itertools
 
-CLASSES = ['AF', 'I-AVB', 'LBBB', 'Normal', 'PAC', 'PVC', 'RBBB', 'STD', 'STE']
+CLASSES = ['AF', 'I-AVB', 'RBBB', 'LBBB', 'PAC', 'PVC', 'STD', 'STE']
+mututally_exclusive = [
+    [0, 1],  # AF and I-AVB
+    [2, 3]   # RBBB and LBBB
+]
+n_classes = len(CLASSES)
+n_target_vec = len(CLASSES) - len(mututally_exclusive)
+class_to_idx = {'AF': 0, 'I-AVB': 0, 'RBBB': 1, 'LBBB': 1, 'PAC': 2, 'PVC': 3, 'STD': 4, 'STE': 5}
+class_to_number = {'AF': 1, 'I-AVB': 2, 'RBBB': 1, 'LBBB': 2, 'PAC': 1, 'PVC': 1, 'STD': 1, 'STE': 1}
+
+
+def multiclass_to_binaryclass(x):
+    n_samples = x.shape[0]
+    new_x = np.zeros((n_samples, n_classes), dtype=bool)
+
+    counter = 0
+    for i, mask in enumerate(mututally_exclusive):
+        for j, id in enumerate(mask):
+            new_x[:, id] = x[:, i] == (j + 1)
+            counter += 1
+    new_x[:, counter:] = x[:, len(mututally_exclusive):]
+    return new_x
 
 
 def resample_ecg(trace, input_freq, output_freq):
@@ -25,8 +46,6 @@ def resample_ecg(trace, input_freq, output_freq):
 
 
 def get_sample(data, header_data, new_freq):
-        # Get classes
-        class_to_idx = dict(zip(CLASSES, range(len(CLASSES))))
         age = 57
         is_male = 1
         for iline in header_data:
@@ -47,11 +66,11 @@ def get_sample(data, header_data, new_freq):
             elif iline.startswith('#Dx'):
                 labels = iline.split(': ')[1].split(',')
 
-        output = np.zeros(len(CLASSES))
+        output = np.zeros(n_target_vec)
 
         for l in labels:
             if l in CLASSES:
-                output[class_to_idx[l]] = 1
+                output[class_to_idx[l]] = class_to_number[l]
 
         # Get header data
         tmp_hea = header_data[0].split(' ')
