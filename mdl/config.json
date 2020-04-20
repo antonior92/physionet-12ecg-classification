@@ -1,0 +1,32 @@
+{
+	"seed": 2,
+	"epochs": 200,
+	"sample_freq": 400,
+	"seq_length": 4096,
+	"batch_size": 32,
+	"valid_split": 0.3,
+	"lr": 0.001,
+	"milestones": [
+		75,
+		125,
+		175
+	],
+	"lr_factor": 0.1,
+	"net_filter_size": [
+		64,
+		128,
+		196,
+		256,
+		320
+	],
+	"net_seq_lengh": [
+		4096,
+		1024,
+		256,
+		64,
+		16
+	],
+	"dropout_rate": 0.8,
+	"kernel_size": 17,
+	"n_total": -1
+}
