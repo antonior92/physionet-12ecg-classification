@@ -5,7 +5,7 @@ The use of [git lfs](https://git-lfs.github.com/) is recommended when loading th
 the manipulation of pretrained weights... With this extension installed run:
 ```
 git clone git@github.com:antonior92/physionet-12ecg-classification.git
-# or: git clone https://github.com/antonior
+# or: git clone https://github.com/antonior92/physionet-12ecg-classification.git
 ```
 The requirements are described in `requirements.txt`.
 
