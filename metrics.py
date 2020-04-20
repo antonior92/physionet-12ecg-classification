@@ -1,5 +1,6 @@
 import warnings
 import numpy as np
+from ecg_dataset import add_normal_column
 from sklearn.metrics import precision_recall_curve
 
 
@@ -26,6 +27,9 @@ def get_threshold(y_true, y_score, beta=2):
 
 
 def compute_beta_score(labels, output,  beta=2, check_errors=True):
+    labels = add_normal_column(labels)
+    output = add_normal_column(output)
+
     num_classes = labels.shape[1]
     # Check inputs for errors.
     if check_errors:

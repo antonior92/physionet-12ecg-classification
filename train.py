@@ -203,13 +203,12 @@ if __name__ == '__main__':
         y_true = multiclass_to_binaryclass(all_targets)
         # Get threshold
         _, _, threshold = get_threshold(y_true, y_score)
-        tqdm.write(threshold)
+        y_pred = y_score > threshold
+        y_true = y_true.astype(np.float)
+        y_pred = y_pred.astype(np.float)
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
-        # Get metrics
-        _, _, threshold = get_threshold(y_true, y_score)
-        y_pred = y_score > threshold
         # Print message
         metrics = get_metrics(y_true, y_pred)
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \

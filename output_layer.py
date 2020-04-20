@@ -1,14 +1,5 @@
 import torch
 
-output = torch.rand((3, 8))  # AF, I-AVB, LBBB, RBBB, PAC, PVC, STD, STE
-target = torch.zeros((3, 6))
-target[0, 0] = 1
-target[1, 0] = 1
-target[2, 0] = 0
-target[1, 1] = 1
-target[2, 1] = 1
-
-bs = output.size(0)
 
 class OutputLayer(object):
     def __init__(self, bs, softmax_mask, device, dtype=torch.float32):
@@ -19,7 +10,6 @@ class OutputLayer(object):
         self.ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
         self.sigmoid =torch.nn.Sigmoid()
         self.softmax = torch.nn.Softmax(dim=-1)
-
 
     def _get_output_components(self, output):
         bs = output.size(0)

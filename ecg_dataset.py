@@ -28,6 +28,26 @@ def multiclass_to_binaryclass(x):
     return new_x
 
 
+def add_normal_column(x, prob=False):
+    n_samples, n_classes = x.shape
+    new_x = np.zeros((n_samples, n_classes + 1), dtype=x.dtype)
+    new_x[:, :-1] = x[:, :]
+    # If x is a vector of zeros and ones
+    if not prob
+        new_x[:, -1] = x.sum(axis=1) == 0
+
+    # if x is a vector of probabilities
+    else:
+        counter = 0
+        new_x[:, -1] = 1.0
+        for m in mututally_exclusive:
+            x[:, -1] *= 1 - x[:, m].sum(axis=1)
+            counter += len(mask)
+        x[:, -1] *= np.prod(1 - x[:, counter:], axis=1)
+
+    return new_x
+
+
 def resample_ecg(trace, input_freq, output_freq):
     trace = np.atleast_1d(trace).astype(float)
     if input_freq != int(input_freq):
