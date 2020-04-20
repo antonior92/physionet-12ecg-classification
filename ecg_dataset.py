@@ -16,6 +16,7 @@ class_to_number = {'AF': 1, 'I-AVB': 2, 'RBBB': 1, 'LBBB': 2, 'PAC': 1, 'PVC': 1
 
 
 def multiclass_to_binaryclass(x):
+    x = np.atleast_2d(x)
     n_samples = x.shape[0]
     new_x = np.zeros((n_samples, n_classes), dtype=bool)
 
@@ -25,27 +26,27 @@ def multiclass_to_binaryclass(x):
             new_x[:, id] = x[:, i] == (j + 1)
             counter += 1
     new_x[:, counter:] = x[:, len(mututally_exclusive):]
-    return new_x
+    return np.squeeze(new_x)
 
 
 def add_normal_column(x, prob=False):
+    x = np.atleast_2d(x)
     n_samples, n_classes = x.shape
     new_x = np.zeros((n_samples, n_classes + 1), dtype=x.dtype)
     new_x[:, :-1] = x[:, :]
     # If x is a vector of zeros and ones
-    if not prob
+    if not prob:
         new_x[:, -1] = x.sum(axis=1) == 0
-
     # if x is a vector of probabilities
     else:
         counter = 0
         new_x[:, -1] = 1.0
-        for m in mututally_exclusive:
-            x[:, -1] *= 1 - x[:, m].sum(axis=1)
+        for mask in mututally_exclusive:
+            new_x[:, -1] = x[:, -1]*(1 - x[:, mask].sum(axis=1))
             counter += len(mask)
-        x[:, -1] *= np.prod(1 - x[:, counter:], axis=1)
+        x[:, -1] = x[:, -1]*np.prod(1 - x[:, counter:], axis=1)
 
-    return new_x
+    return np.squeeze(new_x)
 
 
 def resample_ecg(trace, input_freq, output_freq):

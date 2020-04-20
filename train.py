@@ -204,8 +204,6 @@ if __name__ == '__main__':
         # Get threshold
         _, _, threshold = get_threshold(y_true, y_score)
         y_pred = y_score > threshold
-        y_true = y_true.astype(np.float)
-        y_pred = y_pred.astype(np.float)
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
