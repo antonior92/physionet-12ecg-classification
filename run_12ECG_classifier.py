@@ -12,7 +12,7 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
     # Get model specifications
     model, out_layer, threshold, config_dict, device = mdl
     # Get sample
-    sample = get_sample(data, header_data, config_dict['sample_freq'])
+    sample = get_sample(header_data, data, config_dict['sample_freq'])
     # Get trace
     model.eval()
     # Run model
