@@ -23,7 +23,7 @@ def train(ep, model, optimizer, train_samples, out_layer, device):
                      desc=train_desc.format(ep, 0), position=0)
     for i in range(n_train_batches):
         # Send to device
-        bs = min(args.batch_size, n_train_final - n_entries + 1)
+        bs = min(args.batch_size, n_train_final - n_entries)
         samples = train_samples[n_entries:n_entries+bs]
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
         target = torch.stack([torch.tensor(s['output'], dtype=torch.long, device=device) for s in samples], dim=0)
@@ -165,11 +165,22 @@ if __name__ == '__main__':
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
     # Define dataset
-    train_samples = list(itertools.chain(*[split_long_signals(s) for s in dset[:n_train]]))
+    train_dset = dset[:n_train]
+    train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
     valid_samples = dset[n_train:n_total]
     # Get number of batches
     n_train_final = len(train_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
+    tqdm.write("Done!")
+
+    tqdm.write("Define threshold ...")
+    # Get all targets
+    targets = np.stack([s['output'] for s in train_dset])
+    targets_bin = multiclass_to_binaryclass(targets)
+    threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
+    tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
+    tqdm.write("\t\t\t   = AF:{:.2f},I-AVB:{:.2f},RBBB:{:.2f},LBBB:{:.2f},PAC:{:.2f},PVC:{:.2f},STD:{:.2f},STE:{:.2f}"
+               .format(*threshold))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
@@ -201,8 +212,7 @@ if __name__ == '__main__':
         train_loss = train(ep, model, optimizer, train_samples, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_samples, out_layer, device, args.seq_length)
         y_true = multiclass_to_binaryclass(all_targets)
-        # Get threshold
-        _, _, threshold = get_threshold(y_true, y_score)
+        # Get labels
         y_pred = y_score > threshold
         # Get learning rate
         for param_group in optimizer.param_groups:
@@ -215,7 +225,6 @@ if __name__ == '__main__':
             .format(ep, train_loss, valid_loss, learning_rate,
                     metrics['f_beta'], metrics['g_beta'],
                     metrics['geom_mean'])
-
         tqdm.write(message)
         # Save history
         history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
@@ -237,7 +246,6 @@ if __name__ == '__main__':
             tqdm.write("Save model!")
         # Call optimizer step
         scheduler.step()
-
         # Save last model
         if ep == args.epochs - 1:
             torch.save({'threshold': threshold,
