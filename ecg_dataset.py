@@ -110,24 +110,23 @@ def read_header(header_data):
            {'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq}
 
 
-def get_sample(data, header_data, new_freq):
+def get_sample(header_data, data=None, new_freq=None):
     # Read header
     attributes, data_annotation = read_header(header_data)
-    baseline, gain_lead, freq = data_annotation['baseline'], data_annotation['gain_lead'], data_annotation['freq']
-
-    # Change scale
-    data_with_gain = (data - baseline[:, None]) / gain_lead[:, None]
-    # Resample
-    if freq != new_freq:
-        data_with_gain = resample_ecg(data_with_gain, freq, new_freq)
-    # Add data attribute
-    attributes['data'] = data_with_gain
-
+    # Get data
+    if data is not None:
+        # Change scale
+        data_with_gain = (data - data_annotation['baseline'][:, None]) / data_annotation['gain_lead'][:, None]
+        # Resample
+        if data_annotation['freq'] != new_freq:
+            data_with_gain = resample_ecg(data_with_gain, data_annotation['freq'], new_freq)
+        # Add data attribute
+        attributes['data'] = data_with_gain
     return attributes
 
 
 class ECGDataset(object):
-    def __init__(self, input_folder, freq=500):
+    def __init__(self, input_folder, freq=500, only_header=False):
         # Save input files and folder
         input_files = []
         for f in os.listdir(input_folder):
@@ -137,6 +136,7 @@ class ECGDataset(object):
         self.input_file = input_files
         self.input_folder = input_folder
         self.freq = freq
+        self.only_header = only_header
 
     def get_ids(self):
         return [int(f.split('A')[-1].split('.mat')[0]) for f in self.input_file]
@@ -144,25 +144,26 @@ class ECGDataset(object):
     def __len__(self):
         return len(self.input_file)
 
-    def _getsample(self, idx):
+    def _getsample(self, idx, only_header=False):
         filename = os.path.join(self.input_folder, self.input_file[idx])
 
-        x = loadmat(filename)
-        data = np.asarray(x['val'], np.float32)
-
+        if only_header:
+            data = None
+        else:
+            x = loadmat(filename)
+            data = np.asarray(x['val'], np.float32)
         # Get header data
         new_file = filename.replace('.mat', '.hea')
         input_header_file = os.path.join(new_file)
         with open(input_header_file, 'r') as f:
             header_data = f.readlines()
-
-        return get_sample(data, header_data, self.freq)
+        return get_sample(header_data, data, self.freq)
 
     def __getitem__(self, idx):
         if isinstance(idx, int):
-            return self._getsample(idx)
+            return self._getsample(idx, self.only_header)
         elif isinstance(idx, slice):
-            return [self._getsample(i) for i in itertools.islice(range(len(self)), idx.start, idx.stop, idx.step)]
+            return [self._getsample(i, self.only_header) for i in itertools.islice(range(len(self)), idx.start, idx.stop, idx.step)]
         else:
             raise IndexError()
 
@@ -209,20 +210,22 @@ def apply_to_all_dict_values(d, fn):
 
 
 if __name__ == '__main__':
+    # Print classes
+    ecg_dataset = ECGDataset('./Training_WFDB', freq=400, only_header=True)
+    dset = to_dict_of_lists(ecg_dataset)
+    outputs = np.stack(dset['output'])
+    outputs_b = multiclass_to_binaryclass(outputs)
+    print(outputs_b.sum(axis=0)/6877)
+
+    # Plot example
     import matplotlib.pyplot as plt
     ecg_dataset = ECGDataset('./Training_WFDB', freq=400)
     len(ecg_dataset)
 
     jj = 1002
-    plt.plot(ecg_dataset[jj]['data'][0, :])
-    plt.show()
-    print(ecg_dataset[jj]['data'].shape)
     for x in split_long_signals(ecg_dataset[jj]):
-        print(x['data'].shape)
-        print(x['split'])
         plt.plot(x['data'][0, :])
         plt.show()
-
     print(ecg_dataset.get_ids())
 
     samples = to_dict_of_lists(list(itertools.chain(*[split_long_signals(s) for s in ecg_dataset[:10]])))
