@@ -8,7 +8,7 @@ from warnings import warn
 from ecg_dataset import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
-from metrics import get_threshold, get_metrics
+from metrics import get_metrics
 from output_layer import OutputLayer
 
 
