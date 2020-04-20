@@ -66,51 +66,64 @@ def resample_ecg(trace, input_freq, output_freq):
     return new_trace
 
 
+def read_header(header_data):
+    # Get attributes
+    age = 57
+    is_male = 1
+    for iline in header_data:
+        # Remove \n
+        iline = iline.split("\n")[0]
+        # Get age sex and label
+        if iline.startswith('#Age'):
+            tmp_age = iline.split(': ')[1].strip()
+            age = int(tmp_age if (tmp_age != 'NaN') else 57)
+            if age < 0 or age > 110:
+                age = 57
+        elif iline.startswith('#Sex'):
+            tmp_sex = iline.split(': ')[1]
+            if tmp_sex.strip() == 'Female':
+                is_male = 0
+            else:
+                is_male = 1
+        elif iline.startswith('#Dx'):
+            labels = iline.split(': ')[1].split(',')
+
+    # labels to vector
+    target = np.zeros(n_target_vec)
+    for l in labels:
+        if l in CLASSES:
+            target[class_to_idx[l]] = class_to_number[l]
+
+    # Traces annotation
+    tmp_hea = header_data[0].split(' ')
+    id = int(tmp_hea[0].split('A')[1])
+    num_leads = int(tmp_hea[1])
+    freq = int(tmp_hea[2])
+    gain_lead = np.zeros(num_leads)
+    baseline = np.zeros(num_leads)
+    for i in range(num_leads):
+        tmp_hea = header_data[i + 1].split(' ')
+        gain_lead[i] = int(tmp_hea[2].split('/mV')[0])
+        baseline[i] = int(tmp_hea[4])
+
+    return {'id': id, 'age': age, 'is_male': is_male, 'output': target}, \
+           {'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq}
+
+
 def get_sample(data, header_data, new_freq):
-        age = 57
-        is_male = 1
-        for iline in header_data:
-            # Remove \n
-            iline = iline.split("\n")[0]
-            # Get age sex and label
-            if iline.startswith('#Age'):
-                tmp_age = iline.split(': ')[1].strip()
-                age = int(tmp_age if (tmp_age != 'NaN') else 57)
-                if age < 0 or age > 110:
-                    age = 57
-            elif iline.startswith('#Sex'):
-                tmp_sex = iline.split(': ')[1]
-                if tmp_sex.strip() == 'Female':
-                    is_male = 0
-                else:
-                    is_male = 1
-            elif iline.startswith('#Dx'):
-                labels = iline.split(': ')[1].split(',')
+    # Read header
+    attributes, data_annotation = read_header(header_data)
+    baseline, gain_lead, freq = data_annotation['baseline'], data_annotation['gain_lead'], data_annotation['freq']
 
-        output = np.zeros(n_target_vec)
+    # Change scale
+    data_with_gain = (data - baseline[:, None]) / gain_lead[:, None]
+    # Resample
+    if freq != new_freq:
+        data_with_gain = resample_ecg(data_with_gain, freq, new_freq)
+    # Add data attribute
+    attributes['data'] = data_with_gain
 
-        for l in labels:
-            if l in CLASSES:
-                output[class_to_idx[l]] = class_to_number[l]
-
-        # Get header data
-        tmp_hea = header_data[0].split(' ')
-        id = int(tmp_hea[0].split('A')[1])
-        num_leads = int(tmp_hea[1])
-        freq = int(tmp_hea[2])
-        gain_lead = np.zeros(num_leads)
-        baseline = np.zeros(num_leads)
-        for i in range(num_leads):
-            tmp_hea = header_data[i + 1].split(' ')
-            gain_lead[i] = int(tmp_hea[2].split('/mV')[0])
-            baseline[i] = int(tmp_hea[4])
-        # Change scale
-        data_with_gain = (data - baseline[:, None]) / gain_lead[:, None]
-        # Resample
-        if freq != new_freq:
-            data_with_gain = resample_ecg(data_with_gain, freq, new_freq)
-
-        return {'id': id, 'data': data_with_gain, 'age': age, 'is_male': is_male, 'output': output}
+    return attributes
 
 
 class ECGDataset(object):
