@@ -1,0 +1,9 @@
+Code Team
+
+Antônio H. Ribeiro (antonio.horta@dcc.ufmg.br)
+Antonio L. Pinho Ribeiro (antonio.ribeiro@ebserh.gov.br)
+Daniel Gedon (daniel.gedon@it.uu.se)
+Daniel Martins Teixeira (danielmteixeira@ufmg.br)
+Manoel Horta Ribeiro (manoel.hortaribeiro@epfl.ch)
+Thomas B. Schön (thomas.schon@it.uu.se)
+Wagner Meira Jr (meira@dcc.ufmg.br)
