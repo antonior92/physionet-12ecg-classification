@@ -26,7 +26,7 @@
 		64,
 		16
 	],
-	"dropout_rate": 0.8,
-	"kernel_size": 17,
+	"dropout_rate": 0.5,
+	"kernel_size": 15,
 	"n_total": -1
 }
