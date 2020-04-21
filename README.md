@@ -73,7 +73,7 @@ This should create the folder
 ```
 Look at `run_12ECG_classifier.py` to see how this model might be loaded.
 
-## Scripts from the Challenge
+## Scripts from the challenge
 
 There are two scripts that are provided by the challenge organizers `driver.py` and `evaluate_12ECG_score.py`.
 
@@ -98,5 +98,5 @@ This script is available from: https://github.com/physionetchallenges/python-cla
 The script `evaluate_12ECG_score.py` is available in: https://github.com/physionetchallenges/evaluation-2020.
 It can use the output from `driver.py` to assess the model performance according to different scores.
 ````
-python evaluate_12ECG_score.py labels output scores.csv
+python evaluate_12ECG_score.py input_directory output_directory scores.csv
 ````
