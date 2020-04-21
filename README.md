@@ -1,8 +1,7 @@
 # physionet-12ecg-classification
 
 
-The use of [git lfs](https://git-lfs.github.com/) is recommended when loading this repository to facilitate
-the manipulation of pretrained weights... With this extension installed run:
+To load this repository run:
 ```
 git clone git@github.com:antonior92/physionet-12ecg-classification.git
 # or: git clone https://github.com/antonior92/physionet-12ecg-classification.git
@@ -58,16 +57,21 @@ at the last epoch of the training (not necessarily the one with the best validat
 
 ## Pretrained model
 
-The output of one successful training procedure is available on `./mdl`
+The output of one successful training procedure is available and can be loaded using:
+```
+mkdir ./mdl
+wget https://www.dropbox.com/s/t4hee1krodllkdn/config.json?dl=0 -O mdl/config.json
+wget https://www.dropbox.com/s/rw0idd0da34tmr1/model.pth?dl=0 -O mdl/model.pth
+wget https://www.dropbox.com/s/z8x7iawuiz1mers/history.csv?dl=0 -O mdl/history.csv
+```
+This should create the folder
 ```
 ./mdl
     config.json
     model.pth
     history.csv
 ```
-Look at `run_12ECG_classifier.py` to see how this model might be loaded. We use 
-[git lfs](https://git-lfs.github.com/) to deal more efficiently with the large file 
-`model.pth`.
+Look at `run_12ECG_classifier.py` to see how this model might be loaded.
 
 ## Scripts from the Challenge
 
