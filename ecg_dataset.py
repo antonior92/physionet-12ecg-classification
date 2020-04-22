@@ -96,15 +96,27 @@ def read_header(header_data):
 
     # Traces annotation
     tmp_hea = header_data[0].split(' ')
-    id = int(tmp_hea[0].split('A')[1])
-    num_leads = int(tmp_hea[1])
-    freq = int(tmp_hea[2])
-    gain_lead = np.zeros(num_leads)
+    # id
+    try:
+        id = int(tmp_hea[0].split('A')[1])
+    except:
+        id = 0
+    # num leads and freq
+    try:
+        num_leads = int(tmp_hea[1])
+        freq = int(tmp_hea[2])
+    except:
+        num_leads = 12
+        freq = 500
+    gain_lead = 1000*np.ones(num_leads)
     baseline = np.zeros(num_leads)
     for i in range(num_leads):
         tmp_hea = header_data[i + 1].split(' ')
-        gain_lead[i] = int(tmp_hea[2].split('/mV')[0])
-        baseline[i] = int(tmp_hea[4])
+        try:
+            gain_lead[i] = int(tmp_hea[2].split('/mV')[0])
+            baseline[i] = int(tmp_hea[4])
+        except:
+            pass
 
     return {'id': id, 'age': age, 'is_male': is_male, 'output': target}, \
            {'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq}
