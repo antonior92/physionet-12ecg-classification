@@ -156,6 +156,9 @@ if __name__ == '__main__':
     train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
     valid_dset = dset[n_train:n_total]
     valid_samples = list(itertools.chain(*[split_long_signals(s) for s in valid_dset]))
+    # Save train and test ids
+    np.savetxt(os.path.join(folder, 'pretrain_train_ids.txt'), [s['id'] for s in train_dset], fmt='%d')
+    np.savetxt(os.path.join(folder, 'pretrain_valid_ids.txt'), [s['id'] for s in valid_dset], fmt='%d')
     # Get number of batches
     tqdm.write("Done!")
 
@@ -190,6 +193,41 @@ if __name__ == '__main__':
     loss = nn.MSELoss(reduction='sum')
     tqdm.write("Done!")
 
+    history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr",])
+    best_loss = np.Inf
     for ep in range(args.epochs):
         train_loss = selfsupervised(ep, model, optimizer, train_samples, loss, device, args, train=True)
         valid_loss = selfsupervised(ep, model, optimizer, valid_samples, loss, device, args, train=False)
+        # Get learning rate
+        for param_group in optimizer.param_groups:
+            learning_rate = param_group["lr"]
+        # Print message
+        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
+                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
+            .format(ep, train_loss, valid_loss, learning_rate)
+        tqdm.write(message)
+
+        # Save history
+        history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
+                                  "lr": learning_rate},
+                                 ignore_index=True)
+        history.to_csv(os.path.join(folder, 'pretrain_history.csv'), index=False)
+
+        # Save best model
+        if best_loss > valid_loss:
+            # Save model
+            torch.save({'epoch': ep,
+                        'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict()},
+                       os.path.join(folder, 'pretrain_model.pth'))
+            # Update best validation loss
+            best_loss = valid_loss
+            tqdm.write("Save model!")
+        # Save last model
+        if ep == args.epochs - 1:
+            torch.save({'model': model.state_dict(),
+                        'optimizer': optimizer.state_dict()},
+                       os.path.join(folder, 'pretrain_final_model.pth'))
+            tqdm.write("Save model!")
+        # Call optimizer step
+        scheduler.step()
