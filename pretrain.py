@@ -9,9 +9,41 @@ from ecg_dataset import *
 from tqdm import tqdm
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
-from models.resnet import ResNet1d
-from metrics import get_metrics
-from output_layer import OutputLayer
+
+
+class PretrainedRNNBlock(nn.Module):
+    """Get reusable part from MyRNN and return new model. Include Linear block with the given output_size."""
+    def __init__(self, pretrained, output_size, freeze=False):
+        super(PretrainedRNNBlock, self).__init__()
+        self.rnn = pretrained._modules['rnn']
+        if freeze:
+            for param in self.rnn.parameters():
+                param.requires_grad = False
+        self.linear = nn.Linear(self.rnn.hidden_size, output_size)
+
+    def forward(self, inp):
+        o1, _ = self.rnn(inp.transpose(1, 2))
+        o2 = self.linear(o1)
+        return o2.transpose(1, 2)
+
+
+class MyRNN(nn.Module):
+    """My RNN"""
+    def __init__(self, args):
+        super(MyRNN, self).__init__()
+        N_LEADS = 12
+        self.rnn = getattr(nn, args['rnn_type'])(N_LEADS, args['hidden_size'], args['num_layers'],
+                                              dropout=args['dropout'], batch_first=True)
+        self.linear = nn.Linear(args['hidden_size'], N_LEADS * len(args['k_steps_ahead']))
+
+    def forward(self, inp):
+        o1, _ = self.rnn(inp.transpose(1, 2))
+        o2 = self.linear(o1)
+        return o2.transpose(1, 2)
+
+    def get_pretrained(self, output_size, freeze=False):
+        return PretrainedRNNBlock(self, output_size, freeze)
+
 
 
 def get_input_and_targets(traces, args):
@@ -91,16 +123,14 @@ if __name__ == '__main__':
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
     config_parser.add_argument('--dropout', type=float, default=0,
                                help='dropout rate (default: 0).')
-    config_parser.add_argument('--kernel_size', type=int, default=17,
-                               help='kernel size in convolutional layers (default: 17).')
     config_parser.add_argument('--rnn_type', type=str, default='LSTM',
                                help="Which rnn to use. Options are {'LSTM', 'GRU', 'RNN'}")
-    config_parser.add_argument('--hidden_size', type=int, default=200,
-                               help="Hidden size rnn. Default is 200.")
+    config_parser.add_argument('--hidden_size', type=int, default=400,
+                               help="Hidden size rnn. Default is 400.")
     config_parser.add_argument('--num_layers', type=int, default=1,
                                help="Number of layers. Default is 1.")
-    config_parser.add_argument('--clip_value', type=float, default=0.25,
-                               help='maximum value for the gradient norm (default: 0.25)')
+    config_parser.add_argument('--clip_value', type=float, default=1.0,
+                               help='maximum value for the gradient norm (default: 1.0)')
     config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 25, 75, 100],
                                help='Try to predict k steps ahead')
     config_parser.add_argument('--n_total', type=int, default=-1,
@@ -163,21 +193,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    N_LEADS = 12
-
-    class MyRNN(nn.Module):
-        def __init__(self):
-            super(MyRNN, self).__init__()
-            self.rnn = getattr(nn, args.rnn_type)(N_LEADS, args.hidden_size, args.num_layers,
-                                                  dropout=args.dropout, batch_first=True)
-            self.linear = nn.Linear(args.hidden_size, N_LEADS * len(args.k_steps_ahead))
-
-        def forward(self, inp):
-            o1, _ = self.rnn(inp.transpose(1, 2))
-            o2 = self.linear(o1)
-            return o2.transpose(1, 2)
-
-    model = MyRNN()
+    model = MyRNN(vars(args))
     model.to(device=device)
     tqdm.write("Done!")
 
