@@ -14,6 +14,24 @@ from output_layer import OutputLayer
 from pretrain import MyRNN
 
 
+def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
+    N_LEADS = 12
+    n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
+    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
+                      n_classes=len(CLASSES), kernel_size=config['kernel_size'],
+                      dropout_rate=config['dropout_rate'])
+    if pretrain_stage_config is None:
+        model = resnet
+    else:
+        pretrained = MyRNN(pretrain_stage_config)
+        if pretrain_stage_ckpt is not None:
+            pretrained.load_state_dict(pretrain_stage_ckpt['model'])
+        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetunning'])
+        model = nn.Sequential(ptrmdl, resnet)
+    return model
+
+
 # %% Train model
 def train(ep, model, optimizer, train_samples, out_layer, device):
     model.train()
@@ -124,12 +142,10 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--pretrain', nargs='?', const='fine_tunning', default='no_pretrain',
-                                help='weather or not to load a pre-trained model. In this case `--folder`'
-                                     'should give the folder where the pretrained model is saved. Additionally,'
-                                     'it is possible to pass one additional argument {`feature_extrac`, `fine_tunning`}'
-                                     'the first freeze the weights of the pre-trained model and the second fine tune'
-                                     'these weight during training. If not specified, use `fine_tune` option.')
+    config_parser.add_argument('--finetunning',  action='store_true',
+                                help='when there is a pre-trained model, by default it '
+                                     'freezes the weights of the pre-trained model, but with this option'
+                                     'these weight will be fine-tunned during training.')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -167,6 +183,17 @@ if __name__ == '__main__':
         json.dump(vars(args), f, indent='\t')
     # Set seed
     torch.manual_seed(args.seed)
+    # Check if there is pretrained model in the given folder
+    try:
+        ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'), map_location=lambda storage, loc: storage)
+        config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
+        with open(config_pretrain_stage, 'r') as f:
+            config_dict_pretrain_stage = json.load(f)
+        tqdm.write("Found pretrained model!")
+    except:
+        ckpt_pretrain_stage = None
+        config_pretrain_stage = None
+        tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
@@ -194,26 +221,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    N_LEADS = 12
-    n_input_channels = N_LEADS if (args.pretrain == 'no_pretrain') else args.pretrain_output_size
-    resnet = ResNet1d(input_dim=(n_input_channels, args.seq_length),
-                      blocks_dim=list(zip(args.net_filter_size, args.net_seq_lengh)),
-                      n_classes=len(CLASSES), kernel_size=args.kernel_size,
-                      dropout_rate=args.dropout_rate)
-    if args.pretrain == 'no_pretrain':
-        model = resnet
-    else:
-        try:
-            ckpt = torch.load(os.path.join(folder, 'pretrain_model.pth'), map_location=lambda storage, loc: storage)
-            config = os.path.join(folder, 'pretrain_config.json')
-            with open(config, 'r') as f:
-                config_dict = json.load(f)
-        except:
-            raise FileNotFoundError('Pretrained model not found on folder {}'.format(folder))
-        pretrained = MyRNN(config_dict)
-        pretrained.load_state_dict(ckpt['model'])
-        ptrmdl = pretrained.get_pretrained(args.pretrain_output_size, args.pretrain != 'fine_tunning')
-        model = nn.Sequential(ptrmdl, resnet)
+    model = get_model(vars(args), config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
     tqdm.write("Done!")
 
