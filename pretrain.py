@@ -45,7 +45,6 @@ class MyRNN(nn.Module):
         return PretrainedRNNBlock(self, output_size, freeze)
 
 
-
 def get_input_and_targets(traces, args):
     max_steps_ahead = max(args.k_steps_ahead)
     inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
@@ -103,7 +102,7 @@ if __name__ == '__main__':
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
-    config_parser.add_argument('--epochs', type=int, default=200,
+    config_parser.add_argument('--epochs', type=int, default=125,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
@@ -117,7 +116,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
-                               default=[75, 125, 175],
+                               default=[40, 75, 100],
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
@@ -125,13 +124,13 @@ if __name__ == '__main__':
                                help='dropout rate (default: 0).')
     config_parser.add_argument('--rnn_type', type=str, default='LSTM',
                                help="Which rnn to use. Options are {'LSTM', 'GRU', 'RNN'}")
-    config_parser.add_argument('--hidden_size', type=int, default=400,
-                               help="Hidden size rnn. Default is 400.")
+    config_parser.add_argument('--hidden_size', type=int, default=800,
+                               help="Hidden size rnn. Default is 800.")
     config_parser.add_argument('--num_layers', type=int, default=1,
                                help="Number of layers. Default is 1.")
     config_parser.add_argument('--clip_value', type=float, default=1.0,
                                help='maximum value for the gradient norm (default: 1.0)')
-    config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 25, 75, 100],
+    config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 20, 25, 50, 75, 90, 100],
                                help='Try to predict k steps ahead')
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
