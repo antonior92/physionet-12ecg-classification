@@ -4,12 +4,32 @@ import torch
 import argparse
 import datetime
 import pandas as pd
+import torch.nn as nn
 from warnings import warn
 from ecg_dataset import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics
 from output_layer import OutputLayer
+from pretrain import MyRNN
+
+
+def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
+    N_LEADS = 12
+    n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
+    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
+                      n_classes=len(CLASSES), kernel_size=config['kernel_size'],
+                      dropout_rate=config['dropout_rate'])
+    if pretrain_stage_config is None:
+        model = resnet
+    else:
+        pretrained = MyRNN(pretrain_stage_config)
+        if pretrain_stage_ckpt is not None:
+            pretrained.load_state_dict(pretrain_stage_ckpt['model'])
+        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetunning'])
+        model = nn.Sequential(ptrmdl, resnet)
+    return model
 
 
 # %% Train model
@@ -108,6 +128,9 @@ if __name__ == '__main__':
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
+    config_parser.add_argument('--pretrain_output_size', type=int,  default=64,
+                               help='The output of the pretrained model goes through a linear layer, which outputs'
+                                    'a tensor with the given number of features (default: 64).')
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
     config_parser.add_argument('--net_seq_lengh', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
@@ -119,7 +142,10 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-
+    config_parser.add_argument('--finetunning',  action='store_true',
+                                help='when there is a pre-trained model, by default it '
+                                     'freezes the weights of the pre-trained model, but with this option'
+                                     'these weight will be fine-tunned during training.')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -157,6 +183,17 @@ if __name__ == '__main__':
         json.dump(vars(args), f, indent='\t')
     # Set seed
     torch.manual_seed(args.seed)
+    # Check if there is pretrained model in the given folder
+    try:
+        ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'), map_location=lambda storage, loc: storage)
+        config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
+        with open(config_pretrain_stage, 'r') as f:
+            config_dict_pretrain_stage = json.load(f)
+        tqdm.write("Found pretrained model!")
+    except:
+        ckpt_pretrain_stage = None
+        cconfig_dict_pretrain_stage  = None
+        tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
@@ -184,12 +221,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    N_LEADS = 12
-    model = ResNet1d(input_dim=(N_LEADS, args.seq_length),
-                     blocks_dim=list(zip(args.net_filter_size, args.net_seq_lengh)),
-                     n_classes=len(CLASSES),
-                     kernel_size=args.kernel_size,
-                     dropout_rate=args.dropout_rate)
+    model = get_model(vars(args), config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
     tqdm.write("Done!")
 
