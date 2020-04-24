@@ -2,7 +2,7 @@
 import os
 import json
 import torch
-from models.resnet import ResNet1d
+from train import get_model
 from output_layer import OutputLayer
 from ecg_dataset import (get_sample, split_long_signals, CLASSES, mututally_exclusive,
                          add_normal_column)
@@ -53,16 +53,16 @@ def load_12ECG_model():
     with open(config, 'r') as f:
         config_dict = json.load(f)
 
+    # Get pretrained stage config (if available)
+    try:
+        config_pretrain_stage = os.path.join(model_folder, 'pretrain_config.json')
+        with open(config_pretrain_stage, 'r') as f:
+            config_dict_pretrain_stage = json.load(f)
+    except:
+        config_dict_pretrain_stage = None
+
     # Define model
-    N_LEADS = 12
-    n_classes = len(CLASSES)
-    model = ResNet1d(input_dim=(N_LEADS, config_dict['seq_length']),
-                     blocks_dim=list(zip(config_dict['net_filter_size'],
-                                     config_dict['net_seq_lengh'])),
-                     n_classes=n_classes,
-                     kernel_size=config_dict['kernel_size'],
-                     dropout_rate=config_dict['dropout_rate'])
-    model.load_state_dict(ckpt["model"])
+    model = get_model(config_dict, config_dict_pretrain_stage)
 
     # Device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

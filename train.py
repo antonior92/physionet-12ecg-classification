@@ -192,7 +192,7 @@ if __name__ == '__main__':
         tqdm.write("Found pretrained model!")
     except:
         ckpt_pretrain_stage = None
-        config_pretrain_stage = None
+        cconfig_dict_pretrain_stage  = None
         tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
