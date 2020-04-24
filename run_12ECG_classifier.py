@@ -63,6 +63,7 @@ def load_12ECG_model():
 
     # Define model
     model = get_model(config_dict, config_dict_pretrain_stage)
+    model.load_state_dict(ckpt["model"])
 
     # Device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
