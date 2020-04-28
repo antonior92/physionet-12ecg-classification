@@ -15,4 +15,3 @@ RUN wget https://www.dropbox.com/s/46ombyq4ecgl7oa/pretrain_config.json?dl=0 -O 
 
 ## Do not edit if you have a requirements.txt
 RUN pip install -r requirements.txt
-https://www.dropbox.com/s/1pledtjboriw1fz/config.json?dl=0
