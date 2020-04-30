@@ -204,7 +204,11 @@ if __name__ == '__main__':
     # Define dataset
     train_dset = dset[:n_train]
     train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
-    valid_samples = dset[n_train:n_total]
+    valid_dset = dset[n_train:n_total]
+    valid_samples = valid_dset
+    # Save train and test ids
+    np.savetxt(os.path.join(folder, 'train_ids.txt'), [s['id'] for s in train_dset], fmt='%d')
+    np.savetxt(os.path.join(folder, 'valid_ids.txt'), [s['id'] for s in valid_dset], fmt='%d')
     # Get number of batches
     n_train_final = len(train_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
