@@ -207,7 +207,6 @@ def split_long_signals(sample, length=4096, min_length=2000):
     if 'data' in sample.keys():
         data = sample['data']
         total_length = data.shape[1]
-        print(total_length, data.shape[1])
     else:
         total_length = sample['signal_len']
     # Get number of splits

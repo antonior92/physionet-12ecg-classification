@@ -72,7 +72,7 @@ def evaluate(ep, model, valid_samples, out_layer, device, seq_length):
     n_entries = 0
     all_outputs = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
     all_targets = np.zeros((len(valid_samples), n_target_vec), dtype=np.float32)
-    all_ids = np.zeros(len(valid_samples), dtype=int)
+    all_ids = []
     eval_desc = "Epoch {0:2d}: valid - Loss: {1:.6f}" if ep >= 0 \
         else "{valid - Loss: {1:.6f}"
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_samples),
@@ -96,7 +96,7 @@ def evaluate(ep, model, valid_samples, out_layer, device, seq_length):
             total_loss += loss.detach().cpu().numpy()
             # Add outputs
             all_outputs[i, :] = output.detach().cpu().numpy()
-            all_ids[i] = id
+            all_ids.append(id)
             n_entries += 1
             # Print result
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
