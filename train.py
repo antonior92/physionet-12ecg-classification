@@ -207,8 +207,10 @@ if __name__ == '__main__':
     valid_dset = dset[n_train:n_total]
     valid_samples = valid_dset
     # Save train and test ids
-    np.savetxt(os.path.join(folder, 'train_ids.txt'), [s['id'] for s in train_dset], fmt='%d')
-    np.savetxt(os.path.join(folder, 'valid_ids.txt'), [s['id'] for s in valid_dset], fmt='%d')
+    with open(os.path.join(folder, 'train_ids.txt'), 'w') as f:
+        f.write(','.join([s['id'] for s in train_dset]))
+    with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
+        f.write(','.join([s['id'] for s in valid_dset]))
     # Get number of batches
     n_train_final = len(train_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))

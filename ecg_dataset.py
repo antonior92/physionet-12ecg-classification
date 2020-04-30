@@ -98,7 +98,7 @@ def read_header(header_data):
     tmp_hea = header_data[0].split(' ')
     # id
     try:
-        id = int(tmp_hea[0].split('A')[1])
+        id = tmp_hea[0]
     except:
         id = 0
     # num leads and freq
@@ -151,7 +151,7 @@ class ECGDataset(object):
         self.only_header = only_header
 
     def get_ids(self):
-        return [int(f.split('A')[-1].split('.mat')[0]) for f in self.input_file]
+        return [int(f.split('.mat')[0]) for f in self.input_file]
 
     def __len__(self):
         return len(self.input_file)
@@ -181,7 +181,7 @@ class ECGDataset(object):
 
 
 def split_long_signals(sample, length=4096, min_length=2000):
-    idx, data, age, is_male, output = sample['id'], sample['data'], sample['age'], sample['is_male'],  sample['output']
+    id, data, age, is_male, output = sample['id'], sample['data'], sample['age'], sample['is_male'],  sample['output']
     total_length = data.shape[1]
     # Get number of splits
     n_splits = total_length // length + (1 if total_length % length > min_length else 0)
@@ -201,7 +201,7 @@ def split_long_signals(sample, length=4096, min_length=2000):
             x[:, pad:pad+actual_length] = data[:, start_i:start_i + actual_length]
             start_i += actual_length
         # Instanciate dict with data
-        list_subsamples.append({'id': idx, 'split': ii, 'n_splits': n_splits, 'data': x,
+        list_subsamples.append({'id': id, 'split': ii, 'n_splits': n_splits, 'data': x,
                                'age': age, 'is_male': is_male, 'output': output})
     return list_subsamples
 

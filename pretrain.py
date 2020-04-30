@@ -186,8 +186,10 @@ if __name__ == '__main__':
     valid_dset = dset[n_train:n_total]
     valid_samples = list(itertools.chain(*[split_long_signals(s) for s in valid_dset]))
     # Save train and test ids
-    np.savetxt(os.path.join(folder, 'pretrain_train_ids.txt'), [s['id'] for s in train_dset], fmt='%d')
-    np.savetxt(os.path.join(folder, 'pretrain_valid_ids.txt'), [s['id'] for s in valid_dset], fmt='%d')
+    with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'w') as f:
+        f.write(','.join([s['id'] for s in train_dset]))
+    with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'w') as f:
+        f.write(','.join([s['id'] for s in valid_dset]))
     # Get number of batches
     tqdm.write("Done!")
 
