@@ -3,6 +3,7 @@ import json
 import torch
 import argparse
 import datetime
+import random
 import pandas as pd
 import torch.nn as nn
 from warnings import warn
@@ -183,34 +184,55 @@ if __name__ == '__main__':
         json.dump(vars(args), f, indent='\t')
     # Set seed
     torch.manual_seed(args.seed)
+    rng = random.Random(args.seed)
     # Check if there is pretrained model in the given folder
     try:
+        #
         ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'), map_location=lambda storage, loc: storage)
         config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
         with open(config_pretrain_stage, 'r') as f:
             config_dict_pretrain_stage = json.load(f)
         tqdm.write("Found pretrained model!")
+        with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
+            pretrain_ids = f.read().split(',')
     except:
         ckpt_pretrain_stage = None
         config_dict_pretrain_stage = None
+        pretrain_train_ids = []
         tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    all_ids = dset.get_ids()
+    set_all_ids = set(all_ids)
+    # Get pretrained ids
+    pretrain_ids = set_all_ids.intersection(pretrain_ids)  # Get only pretrain ids available
+    other_ids = list(set_all_ids.difference(pretrain_ids))
+    n_pretrain_ids = len(pretrain_ids)
     # Get length
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
-    # Define dataset
-    train_dset = dset[:n_train]
-    train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
-    valid_dset = dset[n_train:n_total]
-    valid_samples = valid_dset
+    if n_pretrain_ids > n_train:
+        tqdm.write("\t Training size extendeded to include all pretraining ids!")
+        n_train = n_pretrain_ids
+        n_valid = n_total - n_train
+    tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
+               .format(n_train, 100*n_train/n_total, n_valid, 100*n_valid/n_total))
+    # Get train and valid ids
+    rng.shuffle(other_ids)
+    train_ids = other_ids[:n_train - n_pretrain_ids] + list(pretrain_ids)
+    valid_ids = other_ids[n_train - n_pretrain_ids:n_total - n_pretrain_ids]
     # Save train and test ids
     with open(os.path.join(folder, 'train_ids.txt'), 'w') as f:
-        f.write(','.join([s['id'] for s in train_dset]))
+        f.write(','.join(train_ids))
     with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
-        f.write(','.join([s['id'] for s in valid_dset]))
+        f.write(','.join(valid_ids))
+    # Define dataset
+    train_dset = dset[train_ids]
+    train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
+    valid_dset = dset[valid_ids]
+    valid_samples = valid_dset
     # Get number of batches
     n_train_final = len(train_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
