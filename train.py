@@ -134,8 +134,8 @@ if __name__ == '__main__':
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
     config_parser.add_argument('--net_seq_lengh', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
                                help='number of samples per resnet layer (default: [4096, 1024, 256, 64, 16]).')
-    config_parser.add_argument('--dropout_rate', type=float, default=0.8,
-                               help='dropout rate (default: 0.8).')
+    config_parser.add_argument('--dropout_rate', type=float, default=0.5,
+                               help='dropout rate (default: 0.5).')
     config_parser.add_argument('--kernel_size', type=int, default=17,
                                help='kernel size in convolutional layers (default: 17).')
     config_parser.add_argument('--n_total', type=int, default=-1,
