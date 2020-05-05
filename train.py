@@ -11,7 +11,7 @@ from ecg_dataset import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics
-from output_layer import OutputLayer
+from output_layer import OutputLayer, collapse
 from pretrain import MyRNN
 
 
@@ -67,7 +67,7 @@ def train(ep, model, optimizer, train_samples, out_layer, device):
     return total_loss / n_entries
 
 
-def evaluate(ep, model, valid_samples, out_layer, device, seq_length):
+def evaluate(ep, model, valid_samples, out_layer, device):
     model.eval()
     total_loss = 0
     n_entries = 0
@@ -78,30 +78,28 @@ def evaluate(ep, model, valid_samples, out_layer, device, seq_length):
         else "{valid - Loss: {1:.6f}"
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_samples),
                     desc=eval_desc.format(ep, 0), position=0)
-    for i, samples in enumerate(valid_samples):
+    for i in range(n_valid_batches):
         with torch.no_grad():
+            bs = min(args.batch_size, n_valid_final - n_entries)
+            samples = valid_samples[n_entries:n_entries + bs]
             # Compute model
-            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
-                                  split_long_signals(samples, length=seq_length)], dim=0)
-            n_subsamples = traces.size(0)
-            id = samples['id']
+            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
+            targets = torch.stack([torch.tensor(s['output'], dtype=torch.long, device=device) for s in samples], dim=0)
             # Forward pass
             logits = model(traces)
-            # Collapse along dim=0 (TODO: try different collapsing functions here)
-            output = out_layer.get_output(logits).mean(dim=0)
-            # Get loss
-            target = torch.tensor(samples['output'], dtype=torch.float32, device=device)
-            all_targets[i, :] = target.detach().cpu().numpy()
+            output = out_layer.get_output(logits)
             # Loss
-            loss = out_layer.loss(logits, torch.stack([target]*n_subsamples, dim=0))
+            loss = out_layer.loss(logits, targets)
+            # Get loss
+            all_targets[n_entries:n_entries + bs, :] = targets.detach().cpu().numpy()
             total_loss += loss.detach().cpu().numpy()
             # Add outputs
-            all_outputs[i, :] = output.detach().cpu().numpy()
-            all_ids.append(id)
-            n_entries += 1
+            all_outputs[n_entries:n_entries + bs, :] = output.detach().cpu().numpy()
+            all_ids.extend([s['id'] for s in samples])
+            n_entries += bs
             # Print result
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
-            eval_bar.update(1)
+            eval_bar.update(bs)
     eval_bar.close()
     return total_loss / n_entries, all_outputs, all_targets, all_ids
 
@@ -198,7 +196,7 @@ if __name__ == '__main__':
     except:
         ckpt_pretrain_stage = None
         config_dict_pretrain_stage = None
-        pretrain_train_ids = []
+        pretrain_ids = []
         tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
@@ -217,8 +215,6 @@ if __name__ == '__main__':
         tqdm.write("\t Training size extendeded to include all pretraining ids!")
         n_train = n_pretrain_ids
         n_valid = n_total - n_train
-    tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
-               .format(n_train, 100*n_train/n_total, n_valid, 100*n_valid/n_total))
     # Get train and valid ids
     rng.shuffle(other_ids)
     train_ids = other_ids[:n_train - n_pretrain_ids] + list(pretrain_ids)
@@ -232,10 +228,16 @@ if __name__ == '__main__':
     train_dset = dset[train_ids]
     train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
     valid_dset = dset[valid_ids]
-    valid_samples = valid_dset
+    valid_samples = list(itertools.chain(*[split_long_signals(s) for s in valid_dset]))
     # Get number of batches
     n_train_final = len(train_samples)
+    n_valid_final = len(valid_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
+    n_valid_batches = int(np.ceil(n_valid_final/args.batch_size))
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) samples divided into {:d} sequences"
+               .format(n_train, 100 * n_train / n_total, n_train_final)),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) samples divided into {:d} sequences"
+               .format(n_valid, 100 * n_valid / n_total, n_valid_final))
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
@@ -270,8 +272,11 @@ if __name__ == '__main__':
     for ep in range(args.epochs):
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_samples, out_layer, device)
-        valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_samples, out_layer, device, args.seq_length)
+        valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_samples, out_layer, device)
         y_true = multiclass_to_binaryclass(all_targets)
+        # Collapse entries with the same id:
+        unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))  # TODO: test alternatives
+        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
         # Get labels
         y_pred = y_score > threshold
         # Get learning rate
