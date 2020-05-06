@@ -3,6 +3,7 @@ import os, sys
 from scipy.io import loadmat
 from scipy.signal import decimate, resample_poly
 import itertools
+import collections.abc as abc
 
 CLASSES = ['AF', 'I-AVB', 'RBBB', 'LBBB', 'PAC', 'PVC', 'STD', 'STE']
 mututally_exclusive = [
@@ -98,14 +99,16 @@ def read_header(header_data):
     tmp_hea = header_data[0].split(' ')
     # id
     try:
-        id = int(tmp_hea[0].split('A')[1])
+        id = tmp_hea[0]
     except:
         id = 0
     # num leads and freq
     try:
+        signal_len = int(tmp_hea[3])
         num_leads = int(tmp_hea[1])
         freq = int(tmp_hea[2])
     except:
+        signal_len = 5120
         num_leads = 12
         freq = 500
     gain_lead = 1000*np.ones(num_leads)
@@ -118,26 +121,29 @@ def read_header(header_data):
         except:
             pass
 
-    return {'id': id, 'age': age, 'is_male': is_male, 'output': target}, \
-           {'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq}
+    return {'id': id, 'age': age, 'is_male': is_male, 'output': target,
+            'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq, 'signal_len': signal_len}
 
 
 def get_sample(header_data, data=None, new_freq=None):
     # Read header
-    attributes, data_annotation = read_header(header_data)
+    attributes = read_header(header_data)
     # Get data
     if data is not None:
         # Change scale
-        data_with_gain = (data - data_annotation['baseline'][:, None]) / data_annotation['gain_lead'][:, None]
+        data_with_gain = (data - attributes['baseline'][:, None]) / attributes['gain_lead'][:, None]
         # Resample
-        if data_annotation['freq'] != new_freq:
-            data_with_gain = resample_ecg(data_with_gain, data_annotation['freq'], new_freq)
-        # Add data attribute
+        if attributes['freq'] != new_freq:
+            data_with_gain = resample_ecg(data_with_gain, attributes['freq'], new_freq)
+        # Add data to attribute
         attributes['data'] = data_with_gain
+    # Compute new signal len
+    if attributes['freq'] != new_freq:
+        attributes['signal_len'] = int(np.floor(attributes['signal_len'] * new_freq / attributes['freq']))
     return attributes
 
 
-class ECGDataset(object):
+class ECGDataset(abc.Sequence):
     def __init__(self, input_folder, freq=500, only_header=False):
         # Save input files and folder
         input_files = []
@@ -149,9 +155,14 @@ class ECGDataset(object):
         self.input_folder = input_folder
         self.freq = freq
         self.only_header = only_header
+        self.id_to_idx = dict(zip(self.get_ids(), range(len(self))))
+
+    def use_only_header(self):
+        self.only_header = True
+        return self
 
     def get_ids(self):
-        return [int(f.split('A')[-1].split('.mat')[0]) for f in self.input_file]
+        return [f.split('.mat')[0] for f in self.input_file]
 
     def __len__(self):
         return len(self.input_file)
@@ -174,15 +185,30 @@ class ECGDataset(object):
     def __getitem__(self, idx):
         if isinstance(idx, int):
             return self._getsample(idx, self.only_header)
+        if isinstance(idx, str):
+            return self._getsample(self.id_to_idx[idx], self.only_header)
         elif isinstance(idx, slice):
-            return [self._getsample(i, self.only_header) for i in itertools.islice(range(len(self)), idx.start, idx.stop, idx.step)]
+            return list(self[itertools.islice(range(len(self)), idx.start, idx.stop, idx.step)])
+        elif isinstance(idx, abc.Sequence):
+            return list(self[iter(idx)])
+        elif isinstance(idx, abc.Iterator):
+            def my_iterator():
+                for i in idx:
+                    yield self[i]
+            return my_iterator()
+        elif isinstance(idx, abc.Iterable):
+            return self[iter(idx)]
         else:
             raise IndexError()
 
 
 def split_long_signals(sample, length=4096, min_length=2000):
-    idx, data, age, is_male, output = sample['id'], sample['data'], sample['age'], sample['is_male'],  sample['output']
-    total_length = data.shape[1]
+    # Get data
+    if 'data' in sample.keys():
+        data = sample['data']
+        total_length = data.shape[1]
+    else:
+        total_length = sample['signal_len']
     # Get number of splits
     n_splits = total_length // length + (1 if total_length % length > min_length else 0)
     n_splits = max(n_splits, 1)
@@ -191,18 +217,22 @@ def split_long_signals(sample, length=4096, min_length=2000):
     list_subsamples = []
     start_i = offset
     for ii in range(n_splits):
-        x = np.zeros((data.shape[0], length))
-        if total_length - start_i >= length:
-            x[:, :length] = data[:, start_i:start_i + length]
-            start_i += length
-        else:
-            actual_length = total_length - start_i
-            pad = (length - actual_length) // 2
-            x[:, pad:pad+actual_length] = data[:, start_i:start_i + actual_length]
-            start_i += actual_length
+        subsample = {k: v for k, v in sample.items() if k != 'data'}
+        subsample['signal_len'] = length
+        if 'data' in sample.keys():
+            x = np.zeros((data.shape[0], length))
+            if total_length - start_i >= length:
+                x[:, :length] = data[:, start_i:start_i + length]
+                start_i += length
+            else:
+                actual_length = total_length - start_i
+                pad = (length - actual_length) // 2
+                x[:, pad:pad+actual_length] = data[:, start_i:start_i + actual_length]
+                start_i += actual_length
+
+            subsample['data'] = x
         # Instanciate dict with data
-        list_subsamples.append({'id': idx, 'split': ii, 'n_splits': n_splits, 'data': x,
-                               'age': age, 'is_male': is_male, 'output': output})
+        list_subsamples.append(subsample)
     return list_subsamples
 
 

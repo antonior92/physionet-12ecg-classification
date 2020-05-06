@@ -4,6 +4,7 @@ import torch
 import argparse
 import datetime
 import pandas as pd
+import random
 from warnings import warn
 from ecg_dataset import *
 from tqdm import tqdm
@@ -173,6 +174,7 @@ if __name__ == '__main__':
         json.dump(vars(args), f, indent='\t')
     # Set seed
     torch.manual_seed(args.seed)
+    rng = random.Random(args.seed)
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
@@ -180,14 +182,24 @@ if __name__ == '__main__':
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
-    # Define dataset
-    train_dset = dset[:n_train]
-    train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
-    valid_dset = dset[n_train:n_total]
-    valid_samples = list(itertools.chain(*[split_long_signals(s) for s in valid_dset]))
+    tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
+               .format(n_train, 100*n_train/n_total,n_valid, 100*n_valid/n_total))
+    # Get ids
+    all_ids = dset.get_ids()
+    rng.shuffle(all_ids)
+    train_ids = all_ids[:n_train]
+    valid_ids = all_ids[n_train:n_total]
     # Save train and test ids
-    np.savetxt(os.path.join(folder, 'pretrain_train_ids.txt'), [s['id'] for s in train_dset], fmt='%d')
-    np.savetxt(os.path.join(folder, 'pretrain_valid_ids.txt'), [s['id'] for s in valid_dset], fmt='%d')
+    with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'w') as f:
+        f.write(','.join(train_ids))
+    with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'w') as f:
+        f.write(','.join(valid_ids))
+    # Define dataset
+    train_dset = dset[train_ids]
+    train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
+    valid_dset = dset[valid_ids]
+    valid_samples = list(itertools.chain(*[split_long_signals(s) for s in valid_dset]))
+
     # Get number of batches
     tqdm.write("Done!")
 
