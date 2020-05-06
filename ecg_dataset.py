@@ -251,6 +251,61 @@ def apply_to_all_dict_values(d, fn):
     return {k: fn(v) for k, v in d.items()}
 
 
+def get_metrics_dataframe(output_folder, dataset_folder, train_ids_path, val_ids_path, max_id=6877):
+    """This creates a ~big~ ~fat~ dataframe with the predictions, probabilities and the real outputs.
+
+    DataFrame returned includes:
+
+            'id':   (str) Id corresponding to the file name in the original dataset.
+        'pred_*':  (bool) Prediction for each one of the 8 classes.
+        'prob_*': (float) Output of the NNet.
+       'truth_*':  (bool) Ground truth.
+           'age':   (int) Age of the patient.
+       'is_male':  (bool) Gender.
+      'baseline': (float) Mean baseline.
+     'gain_lead': (float) Mean baseline.
+          'freq':   (int) Frequency.
+    'signal_len':   (int) Signal length.
+         'train':  (bool) If row was in the training set.
+         'valid':  (bool) If row was in the validation set.
+
+    Example usage:
+        df = get_metrics_dataframe("./outputs/", "./Training_WFDB/", "./train_ids.txt", "./valid_ids.txt")
+    """
+
+    df_list = []
+    for val in range(1, max_id + 1):
+        df_tmp = pd.read_csv(os.path.join(output_folder, "A{:04d}.csv".format(val)), comment="#")
+        predicted = {"pred_" + key: item.astype(bool) for key, item in dict(df_tmp.loc[0]).items()}
+        probs = {"prob_" + key: item for key, item in dict(df_tmp.loc[1]).items()}
+        with open(os.path.join(dataset_folder, "A{:04d}.hea".format(val)), "r") as f:
+            real = read_header(f.readlines())
+            real["output"] = multiclass_to_binaryclass(real["output"])
+            for idx, c in enumerate(CLASSES):
+                real["truth_" + CLASSES[idx]] = real["output"][idx]
+            real.pop("output")
+            real["baseline"] = real["baseline"].mean()
+            real["gain_lead"] = real["gain_lead"].mean()
+        dict_all = {"id": "A{:04d}".format(val)}
+        dict_all.update(predicted)
+        dict_all.update(probs)
+        dict_all.update(real)
+        df_list.append(dict_all)
+
+    with open(train_ids_path, "r") as f:
+        train_ids = set(f.read().split(","))
+
+    with open(val_ids_path, "r") as f:
+        valid_ids = set(f.read().split(","))
+
+    df = pd.DataFrame(df_list)
+
+    df["train"] = df["id"].apply(lambda x: x in train_ids)
+    df["valid"] = df["id"].apply(lambda x: x in valid_ids)
+
+    return df
+
+
 if __name__ == '__main__':
     # Print classes
     ecg_dataset = ECGDataset('./Training_WFDB', freq=400, only_header=True)
