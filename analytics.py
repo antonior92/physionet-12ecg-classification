@@ -93,15 +93,15 @@ if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument('--report_path', type=str, default="./report.txt",
-                               helper="Path to write the report at.")
+                               help="Path to write the report at.")
     config_parser.add_argument('--output_folder', type=str, default="./outputs/",
-                               helper="Path with the model outputs.")
+                               help="Path with the model outputs.")
     config_parser.add_argument('--dataset_folder', type=str, default="./Training_WFDB/",
-                               helper="Path with the training data.")
+                               help="Path with the training data.")
     config_parser.add_argument('--train_ids_path', type=str, default="./train_ids.txt",
-                               helper="Path with the train ids used by the model.")
+                               help="Path with the train ids used by the model.")
     config_parser.add_argument('--val_ids_path', type=str, default="./valid_ids.txt",
-                               helper="Path with the test ids used by the model.")
+                               help="Path with the test ids used by the model.")
 
     args = config_parser.parse_args()
 
