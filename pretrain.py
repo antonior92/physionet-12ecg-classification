@@ -24,7 +24,7 @@ class PretrainedRNNBlock(nn.Module):
         if freeze:
             for param in self.rnn.parameters():
                 param.requires_grad = False
-        self.linear = nn.Linear(self.rnn.hidden_size, output_size)
+        self.linear = nn.Linear(self.rnn.hidden_size_rnn, output_size)
 
     def forward(self, inp):
         o1, _ = self.rnn(inp.transpose(1, 2))
@@ -38,9 +38,9 @@ class MyRNN(nn.Module):
     def __init__(self, args):
         super(MyRNN, self).__init__()
         N_LEADS = 12
-        self.rnn = getattr(nn, args['rnn_type'])(N_LEADS, args['hidden_size'], args['num_layers'],
-                                                 dropout=args['dropout'], batch_first=True)
-        self.linear = nn.Linear(args['hidden_size'], N_LEADS * len(args['k_steps_ahead']))
+        self.rnn = getattr(nn, args['pretrain_model'].upper())(N_LEADS, args['hidden_size_rnn'], args['num_layers'],
+                                                       dropout=args['dropout'], batch_first=True)
+        self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
 
     def forward(self, inp):
         o1, _ = self.rnn(inp.transpose(1, 2))
@@ -116,7 +116,7 @@ class MyTransformer(nn.Module):
 
         self.pos_encoder = PositionalEncoding(args.emb_size, args.dropout)
         self.encoder = nn.Linear(self.N_LEADS, args.emb_size)
-        encoder_layers = TransformerEncoderLayer(args.emb_size, args.num_heads, args.hidden_size, args.dropout)
+        encoder_layers = TransformerEncoderLayer(args.emb_size, args.num_heads, args.hidden_size_trans, args.dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, args.num_trans_layers)
         self.decoder = nn.Linear(args.emb_size, self.N_LEADS)
 
@@ -200,13 +200,19 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device)
                               for s in samples[n_entries:n_entries + bs]], dim=0)
         # reduces to make it run on my laptop for debugging
-        # traces = traces[:, :, :200]
+        traces = traces[:, :, :500]
+        # create model input and targets
+        if args.pretrain_model.lower() == 'transformer':
+            inp = traces
+            target = traces
+        elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
+            inp, target = get_input_and_targets(traces, args)
         if train:
             # Reinitialize grad
             model.zero_grad()
             # Forward pass
-            output = model(traces)
-            ll = loss(output, traces)
+            output = model(inp)
+            ll = loss(output, target)
             # Backward pass
             ll.backward()
             clip_grad_norm_(model.parameters(), args.clip_value)
@@ -214,8 +220,8 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
             optimizer.step()
         else:
             with torch.no_grad():
-                output = model(traces)
-                ll = loss(output, traces)
+                output = model(inp)
+                ll = loss(output, target)
         # Update
         total_loss += ll.detach().cpu().numpy()
         n_entries += bs
@@ -229,6 +235,8 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument('--pretrain_model', type=str, default='gru',
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--epochs', type=int, default=125,
@@ -251,29 +259,31 @@ if __name__ == '__main__':
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
     config_parser.add_argument('--dropout', type=float, default=0.2,
                                help='dropout rate (default: 0.2).')
-    config_parser.add_argument('--rnn_type', type=str, default='LSTM',
-                               help="Which rnn to use. Options are {'LSTM', 'GRU', 'RNN'}")
-    config_parser.add_argument('--hidden_size', type=int, default=50,
-                               help="Hidden size rnn. Default is 50.")
-    config_parser.add_argument('--num_layers', type=int, default=1,
-                               help="Number of layers. Default is 1.")
-    config_parser.add_argument('--num_heads', type=int, default=2,
-                               help="Number of attention heads. Default is 2.")
-    config_parser.add_argument('--num_trans_layers', type=int, default=2,
-                               help="Number of transformer blocks. Default is 2.")
-    config_parser.add_argument('--emb_size', type=int, default=20,
-                               help="Embedding size for transformer. Default is 50.")
-    config_parser.add_argument('--num_masked_subseq', type=int, default=6,
-                               help="Number of attention masked subsequences. Default is 75.")
-    config_parser.add_argument('--num_masked_samples', type=int, default=8,
-                               help="Number of attention masked consecutive samples. Default is 8.")
     config_parser.add_argument('--clip_value', type=float, default=1.0,
                                help='maximum value for the gradient norm (default: 1.0)')
-    config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 20, 25, 50, 75, 90, 100],
-                               help='Try to predict k steps ahead')
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
+    # parameters for recurrent netowrks
+    config_parser.add_argument('--hidden_size_rnn', type=int, default=800,
+                               help="Hidden size rnn. Default is 800.")
+    config_parser.add_argument('--num_layers', type=int, default=1,
+                               help="Number of layers. Default is 1.")
+    config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 20, 25, 50, 75, 90, 100],
+                               help='Try to predict k steps ahead')
+    # parameters for transformer
+    config_parser.add_argument('--num_heads', type=int, default=2,
+                               help="Number of attention heads. Default is 5.")
+    config_parser.add_argument('--num_trans_layers', type=int, default=2,
+                               help="Number of transformer blocks. Default is 2.")
+    config_parser.add_argument('--emb_size', type=int, default=50,
+                               help="Embedding size for transformer. Default is 50.")
+    config_parser.add_argument('--hidden_size_trans', type=int, default=50,
+                               help="Hidden size transformer. Default is 50.")
+    config_parser.add_argument('--num_masked_subseq', type=int, default=5,
+                               help="Number of attention masked subsequences. Default is 75.")
+    config_parser.add_argument('--num_masked_samples', type=int, default=8,
+                               help="Number of attention masked consecutive samples. Default is 8.")
 
     args, rem_args = config_parser.parse_known_args()
     # System setting
@@ -342,7 +352,10 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    model = MyTransformer(args)  # MyRNN(vars(args))
+    if args.pretrain_model.lower() == 'transformer':
+        model = MyTransformer(args)
+    elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
+        model = MyRNN(vars(args))
     model.to(device=device)
     tqdm.write("Done!")
 
