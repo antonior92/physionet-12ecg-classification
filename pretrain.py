@@ -65,7 +65,8 @@ class PretrainedTransformerBlock(nn.Module):
     def __init__(self, pretrained, output_size, freeze=False):
         super(PretrainedTransformerBlock, self).__init__()
         self.N_LEADS = 12
-        self.encoder = pretrained._modules['encoder']
+        self.emb_size = pretrained._modules['decoder'].out_features
+        #self.encoder = pretrained._modules['encoder']
         self.pos_encoder = pretrained._modules['pos_encoder']
         self.transformer_encoder = pretrained._modules['transformer_encoder']
 
@@ -78,7 +79,7 @@ class PretrainedTransformerBlock(nn.Module):
                 param.requires_grad = False
 
         # self.encoder.out_features is also the output feature size of the transformer
-        self.decoder = nn.Linear(self.encoder.out_features, output_size)
+        self.decoder = nn.Linear(self.emb_size, output_size)
 
     def forward(self, inp):
         # inp size is [batch size x N_LEADS x sequence length]
@@ -86,7 +87,7 @@ class PretrainedTransformerBlock(nn.Module):
         src = inp.permute(2, 0, 1)
 
         # process data (no mask in transformer used)
-        src = self.encoder(src) * math.sqrt(self.N_LEADS)
+        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
         src = self.pos_encoder(src)
         output = self.transformer_encoder(src)
         output = self.decoder(output)
@@ -149,14 +150,13 @@ class MyTransformer(nn.Module):
         self.N_LEADS = 12
         self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
 
-        self.encoder = nn.Linear(self.N_LEADS, args['emb_size'])
-        self.pos_encoder = PositionalEncoding(args['emb_size'], args['dropout'])
-        encoder_layers = TransformerEncoderLayer(args['emb_size'], args['num_heads'], args['hidden_size_trans'],
+        # self.encoder = nn.Linear(self.N_LEADS, args['emb_size'])
+        emb_size = int(self.N_LEADS * args['steps_concat'])
+        self.pos_encoder = PositionalEncoding(emb_size, args['dropout'])
+        encoder_layers = TransformerEncoderLayer(emb_size, args['num_heads'], args['hidden_size_trans'],
                                                  args['dropout'])
         self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
-        self.decoder = nn.Linear(args['emb_size'], self.N_LEADS)
-
-        self.init_weights()
+        self.decoder = nn.Linear(emb_size, emb_size)
 
     def _generate_triangular_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -199,25 +199,18 @@ class MyTransformer(nn.Module):
         mask.scatter_(1, idx, float('-inf'))
         return mask
 
-    def init_weights(self):
-        # Comment: This is copied from the source. Not sure if necessary.
-        initrange = 0.1
-        self.encoder.weight.data.uniform_(-initrange, initrange)
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(-initrange, initrange)
-
     def forward(self, src):
         # src size is [batch size x N_LEADS x sequence length]
         # transform src to be of size [sequence length x batch size x N_LEADS]
         src = src.permute(2, 0, 1)
         # generate random mask
         mask = self._generate_random_sequence_mask(len(src), self.mask_param).to(device)
-        # generate triangular mask ('predict next sample')
+        # generate triangular mask ('predict next sample'). Alternative mask
         # mask = self._generate_triangular_mask(len(src))
         self.mask = mask
 
         # process data
-        src = self.encoder(src) * math.sqrt(self.N_LEADS)
+        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
         src = self.pos_encoder(src)
         output = self.transformer_encoder(src, self.mask)
         output = self.decoder(output)
@@ -226,6 +219,25 @@ class MyTransformer(nn.Module):
 
     def get_pretrained(self, output_size, freeze=False):
         return PretrainedTransformerBlock(self, output_size, freeze)
+
+
+def concat_traces(trace, args):
+    bs = trace.shape[0]
+    num_feat = trace.shape[1]
+    seq_len = trace.shape[2]
+
+    # number of time step to be concatenated
+    t = args.steps_concat
+    # allocation
+    out = torch.empty(bs, int(num_feat * t), int(seq_len / t))
+
+    for i in range(num_feat):
+        # reshape
+        temp = trace[:, i, :].reshape(bs, int(seq_len / t), int(t))
+        # transpose and collect
+        out[:, i * t:(i + 1) * t, :] = temp.transpose(2, 1)
+
+    return out
 
 
 def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
@@ -245,8 +257,8 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
         bs = min(args.batch_size, n_total - n_entries)
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device)
                               for s in samples[n_entries:n_entries + bs]], dim=0)
-        # reduces to make it run on my laptop for debugging
-        # traces = traces[:, :, :500]
+        # concatenate multiple timesteps
+        traces = concat_traces(traces, args)
         # create model input and targets
         if args.pretrain_model.lower() == 'transformer':
             inp = traces
@@ -310,14 +322,16 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    # parameters for recurrent netowrks
+    config_parser.add_argument('--steps_concat', type=int, default=8,
+                               help='number of concatenated time steps for model input (default: 8)')
+    # parameters for recurrent networks
     config_parser.add_argument('--hidden_size_rnn', type=int, default=800,
                                help="Hidden size rnn. Default is 800.")
     config_parser.add_argument('--num_layers', type=int, default=1,
                                help="Number of layers. Default is 1.")
     config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 20, 25, 50, 75, 90, 100],
                                help='Try to predict k steps ahead')
-    # parameters for transformer
+    # parameters for transformer network
     config_parser.add_argument('--num_heads', type=int, default=2,
                                help="Number of attention heads. Default is 5.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
