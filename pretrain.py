@@ -24,7 +24,7 @@ class PretrainedRNNBlock(nn.Module):
         if freeze:
             for param in self.rnn.parameters():
                 param.requires_grad = False
-        self.linear = nn.Linear(self.rnn.hidden_size_rnn, output_size)
+        self.linear = nn.Linear(self.rnn.hidden_size, output_size)
 
     def forward(self, inp):
         o1, _ = self.rnn(inp.transpose(1, 2))
@@ -57,6 +57,41 @@ def get_input_and_targets(traces, args):
     n = inp.size(2)
     target = torch.cat([traces[:, :, k:k + n] for k in args.k_steps_ahead], dim=1)
     return inp, target
+
+
+class PretrainedTransformerBlock(nn.Module):
+    """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
+
+    def __init__(self, pretrained, output_size, freeze=False):
+        super(PretrainedTransformerBlock, self).__init__()
+        self.N_LEADS = 12
+        self.encoder = pretrained._modules['encoder']
+        self.pos_encoder = pretrained._modules['pos_encoder']
+        self.transformer_encoder = pretrained._modules['transformer_encoder']
+
+        if freeze:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+            for param in self.pos_encoder.parameters():
+                param.requires_grad = False
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
+
+        # self.encoder.out_features is also the output feature size of the transformer
+        self.decoder = nn.Linear(self.encoder.out_features, output_size)
+
+    def forward(self, inp):
+        # inp size is [batch size x N_LEADS x sequence length]
+        # transform src to be of size [sequence length x batch size x N_LEADS]
+        src = inp.permute(2, 0, 1)
+
+        # process data (no mask in transformer used)
+        src = self.encoder(src) * math.sqrt(self.N_LEADS)
+        src = self.pos_encoder(src)
+        output = self.transformer_encoder(src)
+        output = self.decoder(output)
+        # permute to have the same dimensions as in the input
+        return output.permute(1, 2, 0)
 
 
 class PositionalEncoding(nn.Module):
@@ -114,14 +149,19 @@ class MyTransformer(nn.Module):
         self.N_LEADS = 12
         self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
 
-        self.pos_encoder = PositionalEncoding(args['emb_size'], args['dropout'])
         self.encoder = nn.Linear(self.N_LEADS, args['emb_size'])
+        self.pos_encoder = PositionalEncoding(args['emb_size'], args['dropout'])
         encoder_layers = TransformerEncoderLayer(args['emb_size'], args['num_heads'], args['hidden_size_trans'],
                                                  args['dropout'])
         self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
         self.decoder = nn.Linear(args['emb_size'], self.N_LEADS)
 
         self.init_weights()
+
+    def _generate_triangular_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
 
     def _generate_random_sequence_mask(self, sz, param):
         """
@@ -172,6 +212,8 @@ class MyTransformer(nn.Module):
         src = src.permute(2, 0, 1)
         # generate random mask
         mask = self._generate_random_sequence_mask(len(src), self.mask_param).to(device)
+        # generate triangular mask ('predict next sample')
+        # mask = self._generate_triangular_mask(len(src))
         self.mask = mask
 
         # process data
@@ -181,6 +223,9 @@ class MyTransformer(nn.Module):
         output = self.decoder(output)
         # permute to have the same dimensions as in the input
         return output.permute(1, 2, 0)
+
+    def get_pretrained(self, output_size, freeze=False):
+        return PretrainedTransformerBlock(self, output_size, freeze)
 
 
 def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
@@ -201,7 +246,7 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device)
                               for s in samples[n_entries:n_entries + bs]], dim=0)
         # reduces to make it run on my laptop for debugging
-        traces = traces[:, :, :500]
+        # traces = traces[:, :, :500]
         # create model input and targets
         if args.pretrain_model.lower() == 'transformer':
             inp = traces

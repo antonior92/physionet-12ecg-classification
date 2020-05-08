@@ -12,7 +12,7 @@ from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics
 from output_layer import OutputLayer, collapse
-from pretrain import MyRNN
+from pretrain import MyRNN, MyTransformer
 
 
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
@@ -25,10 +25,13 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     if pretrain_stage_config is None:
         model = resnet
     else:
-        pretrained = MyRNN(pretrain_stage_config)
+        if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
+            pretrained = MyRNN(pretrain_stage_config)
+        elif pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+            pretrained = MyTransformer(pretrain_stage_config)
         if pretrain_stage_ckpt is not None:
             pretrained.load_state_dict(pretrain_stage_ckpt['model'])
-        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetunning'])
+        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
         model = nn.Sequential(ptrmdl, resnet)
     return model
 
@@ -127,6 +130,8 @@ if __name__ == '__main__':
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
+    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--pretrain_output_size', type=int,  default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
@@ -141,7 +146,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--finetunning',  action='store_true',
+    config_parser.add_argument('--finetuning',  action='store_true',
                                 help='when there is a pre-trained model, by default it '
                                      'freezes the weights of the pre-trained model, but with this option'
                                      'these weight will be fine-tunned during training.')
@@ -152,7 +157,7 @@ if __name__ == '__main__':
                             help='input folder.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/' + 'output_test_train_trans',  # modification DG
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
