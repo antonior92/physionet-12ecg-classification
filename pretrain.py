@@ -39,7 +39,7 @@ class MyRNN(nn.Module):
         super(MyRNN, self).__init__()
         N_LEADS = 12
         self.rnn = getattr(nn, args['pretrain_model'].upper())(N_LEADS, args['hidden_size_rnn'], args['num_layers'],
-                                                       dropout=args['dropout'], batch_first=True)
+                                                               dropout=args['dropout'], batch_first=True)
         self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
 
     def forward(self, inp):
@@ -112,13 +112,14 @@ class MyTransformer(nn.Module):
     def __init__(self, args):
         super(MyTransformer, self).__init__()
         self.N_LEADS = 12
-        self.mask_param = [args.num_masked_subseq, args.num_masked_samples]
+        self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
 
-        self.pos_encoder = PositionalEncoding(args.emb_size, args.dropout)
-        self.encoder = nn.Linear(self.N_LEADS, args.emb_size)
-        encoder_layers = TransformerEncoderLayer(args.emb_size, args.num_heads, args.hidden_size_trans, args.dropout)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, args.num_trans_layers)
-        self.decoder = nn.Linear(args.emb_size, self.N_LEADS)
+        self.pos_encoder = PositionalEncoding(args['emb_size'], args['dropout'])
+        self.encoder = nn.Linear(self.N_LEADS, args['emb_size'])
+        encoder_layers = TransformerEncoderLayer(args['emb_size'], args['num_heads'], args['hidden_size_trans'],
+                                                 args['dropout'])
+        self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
+        self.decoder = nn.Linear(args['emb_size'], self.N_LEADS)
 
         self.init_weights()
 
@@ -235,7 +236,7 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--pretrain_model', type=str, default='gru',
+    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
                                help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
@@ -353,7 +354,7 @@ if __name__ == '__main__':
 
     tqdm.write("Define model...")
     if args.pretrain_model.lower() == 'transformer':
-        model = MyTransformer(args)
+        model = MyTransformer(vars(args))
     elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
         model = MyRNN(vars(args))
     model.to(device=device)
