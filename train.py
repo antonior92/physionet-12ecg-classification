@@ -12,23 +12,43 @@ from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics
 from output_layer import OutputLayer, collapse
-from pretrain import MyRNN
+from pretrain import MyRNN, MyTransformer
 
 
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+    # Define pretrain output sequence length
+    if pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+        seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
+    else:
+        seq_len = config['seq_length']
+    # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
+    removed_blocks = 0
+    for l in config['net_seq_lengh']:
+        if l > seq_len:
+            del config['net_seq_lengh'][0]
+            del config['net_filter_size'][0]
+            removed_blocks +=1
+    if removed_blocks > 0:
+        warn("The output of the pretrain stage is not consistent with the conv net "
+             "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
+             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_lengh']))))
+    # Get resnet
+    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
                       n_classes=len(CLASSES), kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
     if pretrain_stage_config is None:
         model = resnet
     else:
-        pretrained = MyRNN(pretrain_stage_config)
+        if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
+            pretrained = MyRNN(pretrain_stage_config)
+        elif pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+            pretrained = MyTransformer(pretrain_stage_config)
         if pretrain_stage_ckpt is not None:
             pretrained.load_state_dict(pretrain_stage_ckpt['model'])
-        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetunning'])
+        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
         model = nn.Sequential(ptrmdl, resnet)
     return model
 
@@ -127,6 +147,8 @@ if __name__ == '__main__':
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
+    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--pretrain_output_size', type=int,  default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
@@ -141,7 +163,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--finetunning',  action='store_true',
+    config_parser.add_argument('--finetuning',  action='store_true',
                                 help='when there is a pre-trained model, by default it '
                                      'freezes the weights of the pre-trained model, but with this option'
                                      'these weight will be fine-tunned during training.')
