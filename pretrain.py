@@ -66,7 +66,6 @@ class PretrainedTransformerBlock(nn.Module):
         super(PretrainedTransformerBlock, self).__init__()
         self.N_LEADS = 12
         self.emb_size = pretrained._modules['decoder'].out_features
-        #self.encoder = pretrained._modules['encoder']
         self.pos_encoder = pretrained._modules['pos_encoder']
         self.transformer_encoder = pretrained._modules['transformer_encoder']
 
@@ -222,22 +221,9 @@ class MyTransformer(nn.Module):
 
 
 def concat_traces(trace, args):
-    bs = trace.shape[0]
-    num_feat = trace.shape[1]
-    seq_len = trace.shape[2]
-
-    # number of time step to be concatenated
-    t = args.steps_concat
-    # allocation
-    out = torch.empty(bs, int(num_feat * t), int(seq_len / t))
-
-    for i in range(num_feat):
-        # reshape
-        temp = trace[:, i, :].reshape(bs, int(seq_len / t), int(t))
-        # transpose and collect
-        out[:, i * t:(i + 1) * t, :] = temp.transpose(2, 1)
-
-    return out
+    bs, n_feature, seq_len = trace.shape
+    t = int(args.steps_concat)
+    return trace.transpose(2, 1).reshape(-1, seq_len // t, n_feature * t).transpose(2, 1)
 
 
 def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
