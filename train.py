@@ -18,7 +18,24 @@ from pretrain import MyRNN, MyTransformer
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+    # Define pretrain output sequence length
+    if pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+        seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
+    else:
+        seq_len = config['seq_length']
+    # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
+    removed_blocks = 0
+    for l in config['net_seq_lengh']:
+        if l > seq_len:
+            del config['net_seq_lengh'][0]
+            del config['net_filter_size'][0]
+            removed_blocks +=1
+    if removed_blocks > 0:
+        warn("The output of the pretrain stage is not consistent with the conv net "
+             "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
+             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_lengh']))))
+    # Get resnet
+    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
                       n_classes=len(CLASSES), kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])

@@ -41,6 +41,7 @@ class MyRNN(nn.Module):
         self.rnn = getattr(nn, args['pretrain_model'].upper())(N_LEADS, args['hidden_size_rnn'], args['num_layers'],
                                                                dropout=args['dropout'], batch_first=True)
         self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
+        self.k_steps_ahead = args['k_steps_ahead']
 
     def forward(self, inp):
         o1, _ = self.rnn(inp.transpose(1, 2))
@@ -50,19 +51,18 @@ class MyRNN(nn.Module):
     def get_pretrained(self, output_size, freeze=False):
         return PretrainedRNNBlock(self, output_size, freeze)
 
-
-def get_input_and_targets(traces, args):
-    max_steps_ahead = max(args.k_steps_ahead)
-    inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
-    n = inp.size(2)
-    target = torch.cat([traces[:, :, k:k + n] for k in args.k_steps_ahead], dim=1)
-    return inp, target
+    def get_input_and_targets(self, traces):
+        max_steps_ahead = max(self.k_steps_ahead)
+        inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
+        n = inp.size(2)
+        target = torch.cat([traces[:, :, k:k + n] for k in self.k_steps_ahead], dim=1)
+        return inp, target
 
 
 class PretrainedTransformerBlock(nn.Module):
     """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
 
-    def __init__(self, pretrained, output_size, freeze=False):
+    def __init__(self, pretrained, output_size,  freeze=False):
         super(PretrainedTransformerBlock, self).__init__()
         self.N_LEADS = 12
         self.emb_size = pretrained._modules['decoder'].out_features
@@ -79,19 +79,23 @@ class PretrainedTransformerBlock(nn.Module):
 
         # self.encoder.out_features is also the output feature size of the transformer
         self.decoder = nn.Linear(self.emb_size, output_size)
+        self.steps_concat = pretrained.steps_concat
 
-    def forward(self, inp):
-        # inp size is [batch size x N_LEADS x sequence length]
-        # transform src to be of size [sequence length x batch size x N_LEADS]
-        src = inp.permute(2, 0, 1)
-
+    def forward(self, src):
+        batch_size, n_feature, seq_len = src.shape
+        # concatenate neighboring samples in feature channel
+        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
+        # put in the right shape for transformer
+        # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
+        src2 = src1.transpose(0, 1)
         # process data (no mask in transformer used)
         # src = self.encoder(src) * math.sqrt(self.N_LEADS)
-        src = self.pos_encoder(src)
-        output = self.transformer_encoder(src)
-        output = self.decoder(output)
+        src3 = self.pos_encoder(src2)
+        out1 = self.transformer_encoder(src3)
+        out2 = self.decoder(out1)
         # permute to have the same dimensions as in the input
-        return output.permute(1, 2, 0)
+        output = out2.permute(1, 2, 0)
+        return output
 
 
 class PositionalEncoding(nn.Module):
@@ -133,7 +137,6 @@ class PositionalEncoding(nn.Module):
         Examples:
             >>> output = pos_encoder(x)
         """
-
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
 
@@ -148,14 +151,13 @@ class MyTransformer(nn.Module):
         super(MyTransformer, self).__init__()
         self.N_LEADS = 12
         self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
-
-        # self.encoder = nn.Linear(self.N_LEADS, args['emb_size'])
         emb_size = int(self.N_LEADS * args['steps_concat'])
         self.pos_encoder = PositionalEncoding(emb_size, args['dropout'])
         encoder_layers = TransformerEncoderLayer(emb_size, args['num_heads'], args['hidden_size_trans'],
                                                  args['dropout'])
         self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
         self.decoder = nn.Linear(emb_size, emb_size)
+        self.steps_concat = args['steps_concat']
 
     def _generate_triangular_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -199,31 +201,32 @@ class MyTransformer(nn.Module):
         return mask
 
     def forward(self, src):
-        # src size is [batch size x N_LEADS x sequence length]
-        # transform src to be of size [sequence length x batch size x N_LEADS]
-        src = src.permute(2, 0, 1)
+        batch_size, n_feature, seq_len = src.shape
+        # concatenate neighboring samples in feature channel
+        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
+        # put in the right shape for transformer
+        # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
+        src2 = src1.transpose(0, 1)
         # generate random mask
-        mask = self._generate_random_sequence_mask(len(src), self.mask_param).to(device)
-        # generate triangular mask ('predict next sample'). Alternative mask
-        # mask = self._generate_triangular_mask(len(src))
+        mask = self._generate_random_sequence_mask(len(src2), self.mask_param).to(device)
+        # generate triangular mask ('predict next sample').
         self.mask = mask
-
         # process data
-        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
-        src = self.pos_encoder(src)
-        output = self.transformer_encoder(src, self.mask)
-        output = self.decoder(output)
-        # permute to have the same dimensions as in the input
-        return output.permute(1, 2, 0)
+        src3 = self.pos_encoder(src2)
+        out1 = self.transformer_encoder(src3, self.mask)
+        out2 = self.decoder(out1)
+        # Go back to original, without neigboring samples concatenated
+        # out3.shape =  batch size, sequence length, n_feature
+        out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
+        # Put in the right shape for transformer
+        output = out3.transpose(1, 2)
+        return output
 
     def get_pretrained(self, output_size, freeze=False):
         return PretrainedTransformerBlock(self, output_size, freeze)
 
-
-def concat_traces(trace, args):
-    bs, n_feature, seq_len = trace.shape
-    t = int(args.steps_concat)
-    return trace.transpose(2, 1).reshape(-1, seq_len // t, n_feature * t).transpose(2, 1)
+    def get_input_and_targets(self, traces):
+        return traces, traces
 
 
 def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
@@ -243,14 +246,8 @@ def selfsupervised(ep, model, optimizer, samples, loss, device, args, train):
         bs = min(args.batch_size, n_total - n_entries)
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device)
                               for s in samples[n_entries:n_entries + bs]], dim=0)
-        # concatenate multiple timesteps
-        traces = concat_traces(traces, args)
         # create model input and targets
-        if args.pretrain_model.lower() == 'transformer':
-            inp = traces
-            target = traces
-        elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
-            inp, target = get_input_and_targets(traces, args)
+        inp, target = model.get_input_and_targets(traces)
         if train:
             # Reinitialize grad
             model.zero_grad()
@@ -308,8 +305,6 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--steps_concat', type=int, default=8,
-                               help='number of concatenated time steps for model input (default: 8)')
     # parameters for recurrent networks
     config_parser.add_argument('--hidden_size_rnn', type=int, default=800,
                                help="Hidden size rnn. Default is 800.")
@@ -330,6 +325,8 @@ if __name__ == '__main__':
                                help="Number of attention masked subsequences. Default is 75.")
     config_parser.add_argument('--num_masked_samples', type=int, default=8,
                                help="Number of attention masked consecutive samples. Default is 8.")
+    config_parser.add_argument('--steps_concat', type=int, default=4,
+                               help='number of concatenated time steps for model input (default: 4)')
 
     args, rem_args = config_parser.parse_known_args()
     # System setting
