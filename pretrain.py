@@ -70,7 +70,7 @@ class PretrainedTransformerBlock(nn.Module):
         self.transformer_encoder = pretrained._modules['transformer_encoder']
 
         if freeze:
-            for param in self.encoder.parameters():
+            for param in self.transformer_encoder.parameters():
                 param.requires_grad = False
             for param in self.pos_encoder.parameters():
                 param.requires_grad = False
