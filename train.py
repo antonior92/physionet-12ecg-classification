@@ -3,6 +3,7 @@ import json
 import torch
 import argparse
 import datetime
+import random
 import pandas as pd
 import torch.nn as nn
 from warnings import warn
@@ -10,24 +11,44 @@ from ecg_dataset import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics
-from output_layer import OutputLayer
-from pretrain import MyRNN
+from output_layer import OutputLayer, collapse
+from pretrain import MyRNN, MyTransformer
 
 
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+    # Define pretrain output sequence length
+    if pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+        seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
+    else:
+        seq_len = config['seq_length']
+    # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
+    removed_blocks = 0
+    for l in config['net_seq_lengh']:
+        if l > seq_len:
+            del config['net_seq_lengh'][0]
+            del config['net_filter_size'][0]
+            removed_blocks +=1
+    if removed_blocks > 0:
+        warn("The output of the pretrain stage is not consistent with the conv net "
+             "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
+             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_lengh']))))
+    # Get resnet
+    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
                       n_classes=len(CLASSES), kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
     if pretrain_stage_config is None:
         model = resnet
     else:
-        pretrained = MyRNN(pretrain_stage_config)
+        if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
+            pretrained = MyRNN(pretrain_stage_config)
+        elif pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+            pretrained = MyTransformer(pretrain_stage_config)
         if pretrain_stage_ckpt is not None:
             pretrained.load_state_dict(pretrain_stage_ckpt['model'])
-        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetunning'])
+        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
         model = nn.Sequential(ptrmdl, resnet)
     return model
 
@@ -66,41 +87,39 @@ def train(ep, model, optimizer, train_samples, out_layer, device):
     return total_loss / n_entries
 
 
-def evaluate(ep, model, valid_samples, out_layer, device, seq_length):
+def evaluate(ep, model, valid_samples, out_layer, device):
     model.eval()
     total_loss = 0
     n_entries = 0
     all_outputs = np.zeros((len(valid_samples), n_classes), dtype=np.float32)
     all_targets = np.zeros((len(valid_samples), n_target_vec), dtype=np.float32)
-    all_ids = np.zeros(len(valid_samples), dtype=int)
+    all_ids = []
     eval_desc = "Epoch {0:2d}: valid - Loss: {1:.6f}" if ep >= 0 \
         else "{valid - Loss: {1:.6f}"
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_samples),
                     desc=eval_desc.format(ep, 0), position=0)
-    for i, samples in enumerate(valid_samples):
+    for i in range(n_valid_batches):
         with torch.no_grad():
+            bs = min(args.batch_size, n_valid_final - n_entries)
+            samples = valid_samples[n_entries:n_entries + bs]
             # Compute model
-            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
-                                  split_long_signals(samples, length=seq_length)], dim=0)
-            n_subsamples = traces.size(0)
-            id = samples['id']
+            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in samples], dim=0)
+            targets = torch.stack([torch.tensor(s['output'], dtype=torch.long, device=device) for s in samples], dim=0)
             # Forward pass
             logits = model(traces)
-            # Collapse along dim=0 (TODO: try different collapsing functions here)
-            output = out_layer.get_output(logits).mean(dim=0)
-            # Get loss
-            target = torch.tensor(samples['output'], dtype=torch.float32, device=device)
-            all_targets[i, :] = target.detach().cpu().numpy()
+            output = out_layer.get_output(logits)
             # Loss
-            loss = out_layer.loss(logits, torch.stack([target]*n_subsamples, dim=0))
+            loss = out_layer.loss(logits, targets)
+            # Get loss
+            all_targets[n_entries:n_entries + bs, :] = targets.detach().cpu().numpy()
             total_loss += loss.detach().cpu().numpy()
             # Add outputs
-            all_outputs[i, :] = output.detach().cpu().numpy()
-            all_ids[i] = id
-            n_entries += 1
+            all_outputs[n_entries:n_entries + bs, :] = output.detach().cpu().numpy()
+            all_ids.extend([s['id'] for s in samples])
+            n_entries += bs
             # Print result
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
-            eval_bar.update(1)
+            eval_bar.update(bs)
     eval_bar.close()
     return total_loss / n_entries, all_outputs, all_targets, all_ids
 
@@ -128,6 +147,8 @@ if __name__ == '__main__':
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
+    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--pretrain_output_size', type=int,  default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
@@ -135,14 +156,14 @@ if __name__ == '__main__':
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
     config_parser.add_argument('--net_seq_lengh', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
                                help='number of samples per resnet layer (default: [4096, 1024, 256, 64, 16]).')
-    config_parser.add_argument('--dropout_rate', type=float, default=0.8,
-                               help='dropout rate (default: 0.8).')
+    config_parser.add_argument('--dropout_rate', type=float, default=0.5,
+                               help='dropout rate (default: 0.5).')
     config_parser.add_argument('--kernel_size', type=int, default=17,
                                help='kernel size in convolutional layers (default: 17).')
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--finetunning',  action='store_true',
+    config_parser.add_argument('--finetuning',  action='store_true',
                                 help='when there is a pre-trained model, by default it '
                                      'freezes the weights of the pre-trained model, but with this option'
                                      'these weight will be fine-tunned during training.')
@@ -183,31 +204,62 @@ if __name__ == '__main__':
         json.dump(vars(args), f, indent='\t')
     # Set seed
     torch.manual_seed(args.seed)
+    rng = random.Random(args.seed)
     # Check if there is pretrained model in the given folder
     try:
+        #
         ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'), map_location=lambda storage, loc: storage)
         config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
         with open(config_pretrain_stage, 'r') as f:
             config_dict_pretrain_stage = json.load(f)
         tqdm.write("Found pretrained model!")
+        with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
+            pretrain_ids = f.read().split(',')
     except:
         ckpt_pretrain_stage = None
-        config_dict_pretrain_stage  = None
+        config_dict_pretrain_stage = None
+        pretrain_ids = []
         tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    all_ids = dset.get_ids()
+    set_all_ids = set(all_ids)
+    # Get pretrained ids
+    pretrain_ids = set_all_ids.intersection(pretrain_ids)  # Get only pretrain ids available
+    other_ids = list(set_all_ids.difference(pretrain_ids))
+    n_pretrain_ids = len(pretrain_ids)
     # Get length
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
+    if n_pretrain_ids > n_train:
+        tqdm.write("\t Training size extendeded to include all pretraining ids!")
+        n_train = n_pretrain_ids
+        n_valid = n_total - n_train
+    # Get train and valid ids
+    rng.shuffle(other_ids)
+    train_ids = other_ids[:n_train - n_pretrain_ids] + list(pretrain_ids)
+    valid_ids = other_ids[n_train - n_pretrain_ids:n_total - n_pretrain_ids]
+    # Save train and test ids
+    with open(os.path.join(folder, 'train_ids.txt'), 'w') as f:
+        f.write(','.join(train_ids))
+    with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
+        f.write(','.join(valid_ids))
     # Define dataset
-    train_dset = dset[:n_train]
+    train_dset = dset[train_ids]
     train_samples = list(itertools.chain(*[split_long_signals(s) for s in train_dset]))
-    valid_samples = dset[n_train:n_total]
+    valid_dset = dset[valid_ids]
+    valid_samples = list(itertools.chain(*[split_long_signals(s) for s in valid_dset]))
     # Get number of batches
     n_train_final = len(train_samples)
+    n_valid_final = len(valid_samples)
     n_train_batches = int(np.ceil(n_train_final/args.batch_size))
+    n_valid_batches = int(np.ceil(n_valid_final/args.batch_size))
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) samples divided into {:d} sequences"
+               .format(n_train, 100 * n_train / n_total, n_train_final)),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) samples divided into {:d} sequences"
+               .format(n_valid, 100 * n_valid / n_total, n_valid_final))
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
@@ -242,8 +294,11 @@ if __name__ == '__main__':
     for ep in range(args.epochs):
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_samples, out_layer, device)
-        valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_samples, out_layer, device, args.seq_length)
+        valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_samples, out_layer, device)
         y_true = multiclass_to_binaryclass(all_targets)
+        # Collapse entries with the same id:
+        unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))  # TODO: test alternatives
+        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
         # Get labels
         y_pred = y_score > threshold
         # Get learning rate
