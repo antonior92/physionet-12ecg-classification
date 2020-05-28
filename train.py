@@ -194,12 +194,12 @@ if __name__ == '__main__':
     if settings.folder[-1] == '/':
         folder = os.path.join(settings.folder, 'output_' +
                               str(datetime.datetime.now()).replace(":", "_").replace(" ", "_").replace(".", "_"))
-        try:
-            os.makedirs(folder)
-        except FileExistsError:
-            pass
     else:
         folder = settings.folder
+    try:
+        os.makedirs(folder)
+    except FileExistsError:
+        pass
     with open(os.path.join(folder, 'config.json'), 'w') as f:
         json.dump(vars(args), f, indent='\t')
     # Set seed
