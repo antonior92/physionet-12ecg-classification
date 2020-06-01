@@ -18,10 +18,11 @@ def execute(trial):
     if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) == False:
         os.mkdir('outputs gridsearch')
     os.chdir("".join((main_path,'\\outputs gridsearch')))
-    #create directory for each iteration with a specific name that can later be accessed
-    if os.path.exists('iteretion{}'.format(i)):
-        shutil.rmtree('iteretion{}'.format(i))
-    os.makedirs('iteretion{}'.format(i))
+    #create directory for each iteration with a specific name that can later be accessed, already created
+    #on train.py
+    #if os.path.exists('iteretion{}'.format(i)):
+    #    shutil.rmtree('iteretion{}'.format(i))
+    #os.makedirs('iteretion{}'.format(i))
 
 
     os.chdir(main_path)
@@ -56,16 +57,16 @@ def geom_mean_searcher(i):
 #defining search space
 search_space = {
     'kernel_size': [5, 10, 17, 34],
-    'dropout_rate': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 ],
-    'lr_factor': [0.001, 0.01 ,0.1],
-    'lr': [0.001, 0.01, 0.1],
-    'batch_size': [ 16, 32 ,64 , 128, 256]
+    'dropout_rate': [0.3, 0.5, 0.7 ],
+    'lr_factor': [0.1],
+    'lr': [0.001, 0.01],
+    'batch_size': [32 ,64]
 }
 
 
 #sets up the study and calls the function
 study= optuna.create_study(sampler=optuna.samplers.GridSampler(search_space), direction='maximize')
-study.optimize(execute, n_trials=4*9*3*3*5)
+study.optimize(execute, n_trials=4*3*1*2*2)
 joblib.dump(study, dump_file_path)
 
 #afterexecuting shows best parameters
