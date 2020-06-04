@@ -4,8 +4,8 @@ import json
 import torch
 from train import get_model
 from output_layer import OutputLayer
-from ecg_dataset import (get_sample, split_long_signals, CLASSES, mututally_exclusive,
-                         add_normal_column)
+from data import (get_sample, split_long_signals, CLASSES, mututally_exclusive,
+                  add_normal_column)
 
 
 def run_12ECG_classifier(data, header_data, classes, mdl):

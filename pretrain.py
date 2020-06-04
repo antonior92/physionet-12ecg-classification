@@ -6,7 +6,7 @@ import datetime
 import pandas as pd
 import random
 from warnings import warn
-from ecg_dataset import *
+from data import *
 from tqdm import tqdm
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer

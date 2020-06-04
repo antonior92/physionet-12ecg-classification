@@ -7,7 +7,7 @@ import random
 import pandas as pd
 import torch.nn as nn
 from warnings import warn
-from ecg_dataset import *
+from data import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics

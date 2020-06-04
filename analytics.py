@@ -1,4 +1,4 @@
-from ecg_dataset import read_header, CLASSES, multiclass_to_binaryclass
+from data import read_header, CLASSES, multiclass_to_binaryclass
 from seaborn.algorithms import bootstrap
 import sklearn.metrics as metrics
 from seaborn.utils import ci
