@@ -19,7 +19,7 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
     # Define pretrain output sequence length
-    if pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+    if pretrain_stage_config is not None and pretrain_stage_config['pretrain_model'].lower() == 'transformer':
         seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
     else:
         seq_len = config['seq_length']
