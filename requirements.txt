@@ -4,3 +4,4 @@ scipy>=1.2.1
 scikit-learn>=0.21.2
 torch>=1.2.0
 tqdm>=4.31.1
+binpacking>=1.4.1
