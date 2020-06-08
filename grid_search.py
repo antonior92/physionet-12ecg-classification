@@ -70,9 +70,9 @@ study.optimize(execute, n_trials=4*3*1*2*2)
 joblib.dump(study, dump_file_path)
 
 #afterexecuting shows best parameters
-print(study.best_trial)
-print('Params with the best results',study.best_params)
-print('The best value was:',study.best_value)
+print('\n',study.best_trial)
+print('\nParams with the best results:',study.best_params)
+print('\nThe best value was:',study.best_value)
 
 
 #todo: 
