@@ -12,7 +12,6 @@ from tqdm import tqdm
 from models.resnet import ResNet1d
 from metrics import get_metrics
 from output_layer import OutputLayer, collapse
-from pretrain import MyRNN, MyTransformer
 
 
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
@@ -212,6 +211,8 @@ if __name__ == '__main__':
         tqdm.write("Found pretrained model!")
         with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
             pretrain_ids = f.read().split(',')
+        # Import pretrain only if needed
+        from pretrain import MyRNN, MyTransformer
     except:
         ckpt_pretrain_stage = None
         config_dict_pretrain_stage = None
