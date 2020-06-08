@@ -62,8 +62,8 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
                      desc=train_desc.format(ep, 0), position=0)
     for i, batch in enumerate(train_loader):
         traces, target, ids, sub_ids = batch
-        traces.to(device)
-        target.to(device)
+        traces = traces.to(device=device)
+        target = target.to(device=device)
         # Reinitialize grad
         model.zero_grad()
         # Forward pass
@@ -98,8 +98,8 @@ def evaluate(ep, model, valid_loader, out_layer, device):
     for i, batch in enumerate(valid_loader):
         with torch.no_grad():
             traces, target, ids, sub_ids = batch
-            traces.to(device)
-            target.to(device)
+            traces = traces.to(device=device)
+            target = target.to(device=device)
             # Forward pass
             logits = model(traces)
             output = out_layer.get_output(logits)

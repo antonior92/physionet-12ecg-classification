@@ -242,7 +242,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     for i, batch in enumerate(train_loader):
         # Send to device
         traces, _, ids, sub_ids = batch
-        traces.to(device)
+        traces = traces.to(device=device)
         # create model input and targets
         inp, target = model.get_input_and_targets(traces)
         if train:
