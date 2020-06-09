@@ -136,3 +136,4 @@ PhysioNetChallenge2020_Training_CPSC.tar.gz
 /output_test*
 .idea/
 /__pycache__/
+/server/*
