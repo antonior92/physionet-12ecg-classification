@@ -212,9 +212,9 @@ if __name__ == '__main__':
         config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
         with open(config_pretrain_stage, 'r') as f:
             config_dict_pretrain_stage = json.load(f)
-        tqdm.write("Found pretrained model!")
         with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
             pretrain_ids = f.read().split(',')
+        tqdm.write("Found pretrained model!")
     except:
         ckpt_pretrain_stage = None
         config_dict_pretrain_stage = None

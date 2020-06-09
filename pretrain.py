@@ -215,7 +215,7 @@ class MyTransformer(nn.Module):
         src3 = self.pos_encoder(src2)
         out1 = self.transformer_encoder(src3, self.mask)
         out2 = self.decoder(out1)
-        # Go back to original, without neigboring samples concatenated
+        # Go back to original, without neighbouring samples concatenated
         # out3.shape =  batch size, sequence length, n_feature
         out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
         # Put in the right shape for transformer
@@ -313,17 +313,17 @@ if __name__ == '__main__':
     config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 20, 25, 50, 75, 90, 100],
                                help='Try to predict k steps ahead')
     # parameters for transformer network
-    config_parser.add_argument('--num_heads', type=int, default=2,
+    config_parser.add_argument('--num_heads', type=int, default=6,
                                help="Number of attention heads. Default is 5.")
-    config_parser.add_argument('--num_trans_layers', type=int, default=2,
-                               help="Number of transformer blocks. Default is 2.")
-    config_parser.add_argument('--emb_size', type=int, default=50,
-                               help="Embedding size for transformer. Default is 50.")
-    config_parser.add_argument('--hidden_size_trans', type=int, default=50,
-                               help="Hidden size transformer. Default is 50.")
-    config_parser.add_argument('--num_masked_subseq', type=int, default=5,
+    config_parser.add_argument('--num_trans_layers', type=int, default=3,
+                               help="Number of transformer blocks. Default is 4.")
+    config_parser.add_argument('--emb_size', type=int, default=400,
+                               help="Embedding size for transformer. Default is 400.")
+    config_parser.add_argument('--hidden_size_trans', type=int, default=100,
+                               help="Hidden size transformer. Default is 100.")
+    config_parser.add_argument('--num_masked_subseq', type=int, default=40,
                                help="Number of attention masked subsequences. Default is 75.")
-    config_parser.add_argument('--num_masked_samples', type=int, default=8,
+    config_parser.add_argument('--num_masked_samples', type=int, default=4,
                                help="Number of attention masked consecutive samples. Default is 8.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input (default: 4)')

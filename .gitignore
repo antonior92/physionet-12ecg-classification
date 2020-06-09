@@ -127,3 +127,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# added by DG
+PhysioNetChallenge2020_Training_CPSC.tar.gz
+/mdl/*
+/Training_WFDB/*
+/output_2020*
+/output_test*
+.idea/
+/__pycache__/
