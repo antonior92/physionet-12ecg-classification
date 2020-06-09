@@ -4,8 +4,8 @@ import json
 import torch
 from train import get_model
 from output_layer import OutputLayer
-from ecg_dataset import (get_sample, split_long_signals, CLASSES, mututally_exclusive,
-                         add_normal_column)
+from data import (get_sample, SplitLongSignals, CLASSES, mututally_exclusive,
+                  add_normal_column)
 
 
 def run_12ECG_classifier(data, header_data, classes, mdl):
@@ -19,7 +19,7 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
     with torch.no_grad():
         # Get traces
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
-                              split_long_signals(sample, length=config_dict['seq_length'])], dim=0)
+                              SplitLongSignals(sample, length=config_dict['seq_length'])], dim=0)
         # Apply model
         logits = model(traces)
         y_score = out_layer.get_output(logits).mean(dim=0).detach().cpu().numpy()
