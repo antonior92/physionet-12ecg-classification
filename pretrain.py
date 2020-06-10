@@ -12,6 +12,7 @@ from torch.nn.utils import clip_grad_norm_
 import random
 from models_pretrain.transformer_pretrain import MyTransformer
 from models_pretrain.rnn_pretrain import MyRNN
+from models_pretrain.transformerxl_pretrain import MyTransformerXL
 
 
 def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
@@ -24,17 +25,33 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     str_name = 'train' if train else 'val'
     desc = "Epoch {:2d}: {} - Loss: {:.6f}"
     bar = tqdm(initial=0, leave=True, total=len(loader), desc=desc.format(ep, str_name, 0), position=0)
+    # create initial memory (required for transformer xl)
+    mems = []
+    param = next(model.parameters())
+    for i in range(args.num_trans_layers + 1):
+        # empty = torch.empty(0, dtype=param.dtype, device=param.device)
+        empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model, dtype=param.dtype, device=param.device)
+        mems.append(empty)
+    # loop over all batches
     for i, batch in enumerate(train_loader):
         # Send to device
         traces, _, ids, sub_ids = batch
         traces = traces.to(device=device)
         # create model input and targets
         inp, target = model.get_input_and_targets(traces)
+        if len(mems) is not 0:
+            # reset memory depending on sub_ids (required for transformer xl)
+            # create mask to only change if sub_ids is zero
+            mask = (torch.tensor(sub_ids) != 0).float()
+            mask = mask[None, :, None]
+            mask = mask.repeat(args.mem_len, 1, args.dim_model)
+            for i in range(args.num_trans_layers + 1):
+                mems[i] = mems[i] * mask
         if train:
             # Reinitialize grad
             model.zero_grad()
             # Forward pass
-            output = model(inp)
+            output, mems = model(inp, mems)
             ll = loss(output, target)
             # Backward pass
             ll.backward()
@@ -43,7 +60,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
             optimizer.step()
         else:
             with torch.no_grad():
-                output = model(inp)
+                output, mems = model(inp, mems)
                 ll = loss(output, target)
         # Update
         total_loss += ll.detach().cpu().numpy()
@@ -60,14 +77,14 @@ if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
     config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
-                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer, Transformer XL (default)')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--epochs', type=int, default=125,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
-    config_parser.add_argument('--seq_length', type=int, default=4096,
+    config_parser.add_argument('--seq_length', type=int, default=128,
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
@@ -100,17 +117,25 @@ if __name__ == '__main__':
                                help="Number of attention heads. Default is 5.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
                                help="Number of transformer blocks. Default is 2.")
-    config_parser.add_argument('--emb_size', type=int, default=50,
-                               help="Embedding size for transformer. Default is 50.")
-    config_parser.add_argument('--hidden_size_trans', type=int, default=50,
-                               help="Hidden size transformer. Default is 50.")
+    config_parser.add_argument('--dim_inner', type=int, default=50,
+                               help="Size of the FF network in the transformer. Default is 50.")
     config_parser.add_argument('--num_masked_subseq', type=int, default=5,
                                help="Number of attention masked subsequences. Default is 75.")
     config_parser.add_argument('--num_masked_samples', type=int, default=8,
                                help="Number of attention masked consecutive samples. Default is 8.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input (default: 4)')
-
+    # addtional parameters for transformer xl
+    config_parser.add_argument('--dim_model', type=int, default=50,
+                               help="Internal dimension of transformer. Default is 50.")
+    config_parser.add_argument('--dim_head', type=int, default=10,
+                               help="Dimension of one transformer head. Default is 10.")
+    config_parser.add_argument('--mem_len', type=int, default=210,
+                               help="Memory length of transformer xl. Default is 1000.")
+    config_parser.add_argument('--dropout_attn', type=float, default=0.2,
+                               help='attention mechanism dropout rate. Default is 0.2.')
+    config_parser.add_argument('--init_std', type=float, default=0.02,
+                               help='standard devition of normal initialization. Default is 0.02.')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -157,7 +182,7 @@ if __name__ == '__main__':
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
     tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
-               .format(n_train, 100*n_train/n_total,n_valid, 100*n_valid/n_total))
+               .format(n_train, 100 * n_train / n_total, n_valid, 100 * n_valid / n_total))
     # Get ids
     all_ids = dset.get_ids()
     rng.shuffle(all_ids)
@@ -176,7 +201,9 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    if args.pretrain_model.lower() == 'transformer':
+    if args.pretrain_model.lower() == 'transformerxl':
+        model = MyTransformerXL(vars(args))
+    elif args.pretrain_model.lower() == 'transformer':
         model = MyTransformer(vars(args))
     elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
         model = MyRNN(vars(args))

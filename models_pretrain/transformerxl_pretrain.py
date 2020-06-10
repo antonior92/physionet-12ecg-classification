@@ -5,59 +5,56 @@ import torch.nn.functional as F
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, demb):
+    def __init__(self, dmod):
         super(PositionalEncoding, self).__init__()
 
-        self.demb = demb
+        self.dmod = dmod
 
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, demb, 2.0) / demb))
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, dmod, 2.0) / dmod))
         self.register_buffer('inv_freq', inv_freq)
 
-    def forward(self, pos_seq, bsz=None):
+    def forward(self, pos_seq):
         sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
-        if bsz is not None:
-            return pos_emb[:, None, :].expand(-1, bsz, -1)
-        else:
-            return pos_emb[:, None, :]
+        return pos_emb[:, None, :]
 
 
 class PositionwiseFF(nn.Module):
-    def __init__(self, d_embed, d_inner, dropout):
+    def __init__(self, d_model, d_inner, dropout):
         super(PositionwiseFF, self).__init__()
 
-        self.d_embed = d_embed
+        self.d_model = d_model
         self.d_inner = d_inner
 
         self.CoreNet = nn.Sequential(
-            nn.Linear(d_embed, d_inner), nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(d_inner, d_embed),
+            nn.Linear(d_inner, d_model),
             nn.Dropout(dropout),
         )
+
     def forward(self, inp):
         return self.CoreNet(inp)
 
 
 class MultiHeadAttnRelPos(nn.Module):
-    def __init__(self, n_head, d_embed, d_head, dropout, dropatt=0):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0):
         super(MultiHeadAttnRelPos, self).__init__()
 
-        self.d_embed = d_embed
+        self.d_model = d_model
         self.n_head = n_head
         self.d_head = d_head
 
         self.scale = 1 / (d_head ** 0.5)
 
-        self.qkv_net = nn.Linear(d_embed, 3 * n_head * d_head, bias=False)
+        self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
 
-        self.r_net = nn.Linear(self.d_embed, self.n_head * self.d_head, bias=False)
+        self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.o_net = nn.Linear(n_head * d_head, d_embed, bias=False)
-
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         # tot_length is combines length of memory and segment
@@ -91,7 +88,7 @@ class MultiHeadAttnRelPos(nn.Module):
 
         #### compute attention probability
         if attn_mask is not None and attn_mask.any().item():
-                attn_score = attn_score.float().masked_fill(attn_mask[:, :, :, None], -float('inf')).type_as(attn_score)
+            attn_score = attn_score.float().masked_fill(attn_mask[:, :, :, None], -float('inf')).type_as(attn_score)
 
         # [tot_len x tot_len x bsz x n_head]
         attn_prob = F.softmax(attn_score, dim=1)
@@ -146,33 +143,42 @@ class MyTransformerEncoderLayer(nn.Module):
 
 
 class MyTransformerXL(nn.Module):
-    def __init__(self, n_layer, n_head, d_head, d_inner, d_model, dropout, dropout_attn, mem_len):
+    def __init__(self, args):  # n_layer, n_head, d_head, d_inner, d_model, dropout, dropout_attn, mem_len):
         super(MyTransformerXL, self).__init__()
 
         N_LEADS = 12
 
-        self.d_embed = d_model
-        self.n_head = n_head
-        self.d_head = d_head
+        self.bsz = args["batch_size"]
+        self.seg_len = args["seq_length"]
 
-        self.mem_len = mem_len
+        self.n_layer = args["num_trans_layers"]
+        self.n_head = args["num_heads"]
+        self.d_head = args["dim_head"]
+        self.d_model = args["dim_model"]
+        self.d_inner = args["dim_inner"]
+        self.dropout = args["dropout"]
+        self.dropout_attn = args["dropout_attn"]
+        self.mem_len = args["mem_len"]
 
-        self.word_emb = nn.Linear(N_LEADS, d_model)
-        self.drop = nn.Dropout(dropout)
-        self.n_layer = n_layer
+        self.input_encoding = nn.Linear(N_LEADS, args["dim_model"])
+        self.drop = nn.Dropout(args["dropout"])
 
         self.layers = nn.ModuleList()
-        for i in range(n_layer):
+        for i in range(self.n_layer):
             self.layers.append(
-                MyTransformerEncoderLayer(n_head, d_model, d_head, d_inner, dropout, dropatt=dropout_attn)
+                MyTransformerEncoderLayer(self.n_head, self.d_model, self.d_head, self.d_inner, self.dropout,
+                                          dropatt=self.dropout_attn)
             )
 
-        self.decoder = nn.Linear(d_model, N_LEADS)
+        self.decoder = nn.Linear(self.d_model, N_LEADS)
 
         # create parameters
-        self.pos_emb = PositionalEncoding(self.d_embed)
+        self.pos_enc = PositionalEncoding(self.d_model)
         self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
         self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
+        # initialize
+        self.r_w_bias = nn.init.normal_(self.r_w_bias, 0.0, 0.02)
+        self.r_r_bias = nn.init.normal_(self.r_r_bias, 0.0, 0.02)
 
     def reset_length(self, mem_len):
         self.mem_len = mem_len
@@ -193,24 +199,23 @@ class MyTransformerXL(nn.Module):
                 new_mems.append(cat[beg_idx:end_idx].detach())
         return new_mems
 
-
-    def forward(self, data, target, *mems):
-        # get the segment length and batch size
-        seg_len, bsz = data.size()
-
+    def forward(self, src, mems):
+        # input is shape (batch_size, N_LEADS, seq_len)
+        # and is reshaped to (seq_len, batch_size, N_LEADS)
+        src = src.permute(2, 0, 1)
         # compute word embeddings
-        word_emb = self.word_emb(data)
-        core_out = self.drop(word_emb)
+        src_enc = self.input_encoding(src)
+        core_out = self.drop(src_enc)
 
         # compute the attention mask
         mem_len_curr = mems[0].size(0)
-        k_len = mem_len_curr + seg_len
-        dec_attn_mask = torch.triu(word_emb.new_ones(seg_len, k_len), diagonal=1 + mem_len_curr).bool()[:, :, None]
+        k_len = mem_len_curr + self.seg_len
+        attn_mask = torch.triu(src_enc.new_ones(self.seg_len, k_len), diagonal=1 + mem_len_curr).bool()[:, :, None]
 
         # compute absolute position within the segment (end_indx : 0)
-        pos_seq = torch.arange(k_len - 1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype)
-        pos_emb = self.pos_emb(pos_seq)
-        pos_emb = self.drop(pos_emb)
+        pos_seq = torch.arange(k_len - 1, -1, -1.0, device=src_enc.device, dtype=src_enc.dtype)
+        pos_enc = self.pos_enc(pos_seq)
+        pos_enc = self.drop(pos_enc)
 
         # store the hidden states (input to transformer and each multihead attention layer)
         hids = []
@@ -221,15 +226,21 @@ class MyTransformerXL(nn.Module):
             # get the currently used memory
             mems_i = None if mems is None else mems[i]
             # compute output of on multihead attention layer
-            core_out = layer(core_out, pos_emb, self.r_w_bias, self.r_r_bias, dec_attn_mask=dec_attn_mask, mems=mems_i)
+            core_out = layer(core_out, pos_enc, self.r_w_bias, self.r_r_bias, attn_mask=attn_mask, mems=mems_i)
             # store hidden state
             hids.append(core_out)
         core_out = self.drop(core_out)
 
         # decode signal
         pred = self.decoder(core_out)
+        # pred is shape (seq_len, batch_size, N_LEADS)
+        # and is reshaped to (batch_size, N_LEADS, seq_len)
+        pred = pred.permute(1, 2, 0)
 
         # update the memory
-        new_mems = self._update_mems(hids, mems, mem_len_curr, seg_len)
+        new_mems = self._update_mems(hids, mems, mem_len_curr, self.seg_len)
 
         return pred, new_mems
+
+    def get_input_and_targets(self, traces):
+        return traces, traces
