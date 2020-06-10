@@ -96,12 +96,12 @@ class MyTransformer(nn.Module):
         super(MyTransformer, self).__init__()
         self.N_LEADS = 12
         self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
-        emb_size = int(self.N_LEADS * args['steps_concat'])
-        self.pos_encoder = PositionalEncoding(emb_size, args['dropout'])
-        encoder_layers = TransformerEncoderLayer(emb_size, args['num_heads'], args['hidden_size_trans'],
+        dim_model = int(self.N_LEADS * args['steps_concat'])
+        self.pos_encoder = PositionalEncoding(dim_model, args['dropout'])
+        encoder_layers = TransformerEncoderLayer(dim_model, args['num_heads'], args['dim_inner'],
                                                  args['dropout'])
         self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
-        self.decoder = nn.Linear(emb_size, emb_size)
+        self.decoder = nn.Linear(dim_model, dim_model)
         self.steps_concat = args['steps_concat']
 
     def _generate_triangular_mask(self, sz):
@@ -145,7 +145,7 @@ class MyTransformer(nn.Module):
         mask.scatter_(1, idx, float('-inf'))
         return mask.to(next(self.parameters()).device)
 
-    def forward(self, src):
+    def forward(self, src, _):
         batch_size, n_feature, seq_len = src.shape
         # concatenate neighboring samples in feature channel
         src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
@@ -160,12 +160,12 @@ class MyTransformer(nn.Module):
         src3 = self.pos_encoder(src2)
         out1 = self.transformer_encoder(src3, self.mask)
         out2 = self.decoder(out1)
-        # Go back to original, without neigboring samples concatenated
+        # Go back to original, without neighboring samples concatenated
         # out3.shape =  batch size, sequence length, n_feature
         out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
         # Put in the right shape for transformer
         output = out3.transpose(1, 2)
-        return output
+        return output, []
 
     def get_pretrained(self, output_size, freeze=False):
         return PretrainedTransformerBlock(self, output_size, freeze)
