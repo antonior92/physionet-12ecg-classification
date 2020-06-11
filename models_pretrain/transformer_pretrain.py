@@ -145,7 +145,7 @@ class MyTransformer(nn.Module):
         mask.scatter_(1, idx, float('-inf'))
         return mask.to(next(self.parameters()).device)
 
-    def forward(self, src, _):
+    def forward(self, src, dummyvar):
         batch_size, n_feature, seq_len = src.shape
         # concatenate neighboring samples in feature channel
         src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)

@@ -30,7 +30,7 @@ class MyRNN(nn.Module):
         self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
         self.k_steps_ahead = args['k_steps_ahead']
 
-    def forward(self, inp, _):
+    def forward(self, inp, dummyvar):
         o1, _ = self.rnn(inp.transpose(1, 2))
         o2 = self.linear(o1)
         return o2.transpose(1, 2), []
