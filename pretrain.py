@@ -52,6 +52,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
             model.zero_grad()
             # Forward pass
             output, mems = model(inp, mems)
+            #output = model(inp)
             ll = loss(output, target)
             # Backward pass
             ll.backward()
@@ -61,6 +62,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         else:
             with torch.no_grad():
                 output, mems = model(inp, mems)
+                #output = model(inp)
                 ll = loss(output, target)
         # Update
         total_loss += ll.detach().cpu().numpy()
@@ -84,7 +86,7 @@ if __name__ == '__main__':
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
-    config_parser.add_argument('--seq_length', type=int, default=128,
+    config_parser.add_argument('--seq_length', type=int, default=4096,
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
