@@ -30,10 +30,10 @@ class MyRNN(nn.Module):
         self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
         self.k_steps_ahead = args['k_steps_ahead']
 
-    def forward(self, inp):
+    def forward(self, inp, _):
         o1, _ = self.rnn(inp.transpose(1, 2))
         o2 = self.linear(o1)
-        return o2.transpose(1, 2)
+        return o2.transpose(1, 2), []
 
     def get_pretrained(self, output_size, freeze=False):
         return PretrainedRNNBlock(self, output_size, freeze)
