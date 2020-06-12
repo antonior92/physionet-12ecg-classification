@@ -1,13 +1,14 @@
-import random
 import math
 import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from models_pretrain.masks_transformer import *
+
 
 class PretrainedTransformerBlock(nn.Module):
     """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
 
-    def __init__(self, pretrained, output_size,  freeze=False):
+    def __init__(self, pretrained, output_size, freeze=False):
         super(PretrainedTransformerBlock, self).__init__()
         self.N_LEADS = 12
         self.emb_size = pretrained._modules['decoder'].out_features
@@ -95,55 +96,17 @@ class MyTransformer(nn.Module):
     def __init__(self, args):
         super(MyTransformer, self).__init__()
         self.N_LEADS = 12
-        self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
-        dim_model = int(self.N_LEADS * args['steps_concat'])
-        self.pos_encoder = PositionalEncoding(dim_model, args['dropout'])
-        encoder_layers = TransformerEncoderLayer(dim_model, args['num_heads'], args['dim_inner'],
-                                                 args['dropout'])
-        self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
-        self.decoder = nn.Linear(dim_model, dim_model)
+        self.num_masked_sampled = args['num_masked_samples']
+        self.perc_masked_samp = args['perc_masked_samp']
+        self.dim_concat = int(self.N_LEADS * args['steps_concat'])
+        self.dim_model = args["dim_model"]
         self.steps_concat = args['steps_concat']
 
-    def _generate_triangular_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-
-    def _generate_random_sequence_mask(self, sz, param):
-        """
-        Implementation is quite inefficient so far. Should be improved!
-        Also the implementation does not care about overlapping intervals of masks.
-        This may yield that different number of samples are masked in different sequences.
-
-        According to attention definition the same mask is used for all sequences in the batch.
-        Mask is a [sz x sz] matrix. If the value [i,j] is masked by a value of -inf, then the for the
-        computation of output j the input i is masked, meaning that no attention is used for this input.
-
-        sz - sequence size
-        p - number of non-overlapping masked subsequences
-        m - number of consecutive samples for each p masked subsequences
-        """
-        p = param[0]
-        m = param[1]
-
-        # allocation
-        idx = torch.empty((sz, p * m), dtype=torch.int64)
-
-        # for all rows in the indexing
-        for i in range(sz):
-            # sample p values without replacement
-            a = random.sample(range(sz - m + 1), p)
-            a.sort()
-            idx_row = []
-            for k in range(p):
-                # generate indices for row i which should be masked
-                idx_row.extend(range(a[k], a[k] + m))
-            idx[i, :] = torch.tensor(idx_row)
-
-        # mask the indices with infinity
-        mask = torch.zeros(sz, sz)
-        mask.scatter_(1, idx, float('-inf'))
-        return mask.to(next(self.parameters()).device)
+        self.encoder = nn.Linear(self.dim_concat, self.dim_model)
+        self.pos_encoder = PositionalEncoding(self.dim_model, args['dropout'])
+        encoder_layers = TransformerEncoderLayer(self.dim_model, args['num_heads'], args['dim_inner'], args['dropout'])
+        self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
+        self.decoder = nn.Linear(self.dim_model, self.dim_concat)
 
     def forward(self, src, dummyvar):
         batch_size, n_feature, seq_len = src.shape
@@ -153,13 +116,17 @@ class MyTransformer(nn.Module):
         # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
         src2 = src1.transpose(0, 1)
         # generate random mask
-        mask = self._generate_random_sequence_mask(len(src2), self.mask_param)
+        mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_sampled,
+                                             self.perc_masked_samp).to(next(self.parameters()).device)
         # generate triangular mask ('predict next sample').
         self.mask = mask
+
         # process data
-        src3 = self.pos_encoder(src2)
-        out1 = self.transformer_encoder(src3, self.mask)
+        src3 = self.encoder(src2)
+        src4 = self.pos_encoder(src3)
+        out1 = self.transformer_encoder(src4, self.mask)
         out2 = self.decoder(out1)
+
         # Go back to original, without neighboring samples concatenated
         # out3.shape =  batch size, sequence length, n_feature
         out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
