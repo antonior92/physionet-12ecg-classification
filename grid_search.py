@@ -30,7 +30,7 @@ def execute(trial):
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
         '--lr_factor {}'.format(trial.suggest_loguniform('pre_lr_factor',0.0001,1)), 
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
-        '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 5, 11)))
+        '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))
     #train.py setup
     train_set_up =('python train.py --n_total 12 --epochs 10 --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
@@ -69,7 +69,7 @@ search_space = {
     'pre_lr':[0.01,0.001],
     'pre_lr_factor':[0.1],
     'pre_dropout_rate':[0.1, 0.2 , 0.3],
-    'pre_num_heads':[6,8,10],
+    'pre_num_heads':[2,5],
     'kernel_size': [11, 17, 35],
     'dropout_rate': [0.3, 0.5, 0.7 ],
     'lr_factor': [0.1],

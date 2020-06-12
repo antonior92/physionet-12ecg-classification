@@ -312,7 +312,7 @@ if __name__ == '__main__':
                                help='Try to predict k steps ahead')
     # parameters for transformer network
     config_parser.add_argument('--num_heads', type=int, default=2,
-                               help="Number of attention heads. Default is 5.")
+                               help="Number of attention heads. Default is 2.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
                                help="Number of transformer blocks. Default is 2.")
     config_parser.add_argument('--emb_size', type=int, default=50,
