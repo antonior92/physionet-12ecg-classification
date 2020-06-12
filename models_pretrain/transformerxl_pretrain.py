@@ -2,6 +2,7 @@ import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from models_pretrain.masks_transformer import *
 
 
 class PositionalEncoding(nn.Module):
@@ -87,8 +88,11 @@ class MultiHeadAttnRelPos(nn.Module):
         attn_score.mul_(self.scale)
 
         #### compute attention probability
-        if attn_mask is not None and attn_mask.any().item():
-            attn_score = attn_score.float().masked_fill(attn_mask[:, :, :, None], -float('inf')).type_as(attn_score)
+        if attn_mask is not None:
+            # convert mask
+            attn_mask = attn_mask.float().masked_fill(attn_mask == float('-inf'), float(1.0)).bool()
+            # apply mask
+            attn_score.masked_fill_(attn_mask[:, :, None, None], -float('inf'))
 
         # [tot_len x tot_len x bsz x n_head]
         attn_prob = F.softmax(attn_score, dim=1)
@@ -151,11 +155,11 @@ class MyTransformerXL(nn.Module):
         self.bsz = args["batch_size"]
         self.seg_len = args["seq_length"]
 
-        self.n_layer = args["num_trans_layers"]
-        self.n_head = args["num_heads"]
-        self.d_head = args["dim_head"]
         self.d_model = args["dim_model"]
         self.d_inner = args["dim_inner"]
+        self.n_layer = args["num_trans_layers"]
+        self.n_head = args["num_heads"]
+        self.d_head = self.d_model // self.n_head  # args["dim_head"]
         self.dropout = args["dropout"]
         self.dropout_attn = args["dropout_attn"]
         self.mem_len = args["mem_len"]
@@ -196,6 +200,7 @@ class MyTransformerXL(nn.Module):
                 # combine previous hidden states with new ones
                 cat = torch.cat([mems[i], hids[i]], dim=0)
                 # only take the last self.mem_len hidden states as new memory
+                # detach the memory to stop propagating it
                 new_mems.append(cat[beg_idx:end_idx].detach())
         return new_mems
 
@@ -210,7 +215,8 @@ class MyTransformerXL(nn.Module):
         # compute the attention mask
         mem_len_curr = mems[0].size(0)
         k_len = mem_len_curr + self.seg_len
-        attn_mask = torch.triu(src_enc.new_ones(self.seg_len, k_len), diagonal=1 + mem_len_curr).bool()[:, :, None]
+        attn_mask = generate_triangular_mask(self.seg_len, k_len)
+
 
         # compute absolute position within the segment (end_indx : 0)
         pos_seq = torch.arange(k_len - 1, -1, -1.0, device=src_enc.device, dtype=src_enc.dtype)

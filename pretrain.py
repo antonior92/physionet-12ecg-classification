@@ -1,9 +1,7 @@
-import os
 import json
 import argparse
 import datetime
 import pandas as pd
-import random
 from warnings import warn
 from data import *
 from tqdm import tqdm
@@ -52,7 +50,6 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
             model.zero_grad()
             # Forward pass
             output, mems = model(inp, mems)
-            #output = model(inp)
             ll = loss(output, target)
             # Backward pass
             ll.backward()
@@ -62,7 +59,6 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         else:
             with torch.no_grad():
                 output, mems = model(inp, mems)
-                #output = model(inp)
                 ll = loss(output, target)
         # Update
         total_loss += ll.detach().cpu().numpy()
@@ -78,7 +74,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
+    config_parser.add_argument('--pretrain_model', type=str, default='TransformerXL',
                                help='type of pretraining net: LSTM, GRU, RNN, Transformer, Transformer XL (default)')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
@@ -86,7 +82,7 @@ if __name__ == '__main__':
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
-    config_parser.add_argument('--seq_length', type=int, default=4096,
+    config_parser.add_argument('--seq_length', type=int, default=1024,
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
@@ -119,20 +115,18 @@ if __name__ == '__main__':
                                help="Number of attention heads. Default is 5.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
                                help="Number of transformer blocks. Default is 2.")
-    config_parser.add_argument('--dim_inner', type=int, default=50,
-                               help="Size of the FF network in the transformer. Default is 50.")
-    config_parser.add_argument('--num_masked_subseq', type=int, default=5,
-                               help="Number of attention masked subsequences. Default is 75.")
-    config_parser.add_argument('--num_masked_samples', type=int, default=8,
-                               help="Number of attention masked consecutive samples. Default is 8.")
-    config_parser.add_argument('--steps_concat', type=int, default=4,
-                               help='number of concatenated time steps for model input (default: 4)')
-    # addtional parameters for transformer xl
     config_parser.add_argument('--dim_model', type=int, default=50,
                                help="Internal dimension of transformer. Default is 50.")
-    config_parser.add_argument('--dim_head', type=int, default=10,
-                               help="Dimension of one transformer head. Default is 10.")
-    config_parser.add_argument('--mem_len', type=int, default=210,
+    config_parser.add_argument('--dim_inner', type=int, default=50,
+                               help="Size of the FF network in the transformer. Default is 50.")
+    config_parser.add_argument('--num_masked_samples', type=int, default=8,
+                               help="Number of consecutive samples masked for attention. Default is 8.")
+    config_parser.add_argument('--perc_masked_samp', type=int, default=0.15,
+                               help="Percentage of total masked samples. Default is 0.15.")
+    config_parser.add_argument('--steps_concat', type=int, default=4,
+                               help='number of concatenated time steps for model input (default: 4)')
+    # additional parameters for transformer xl
+    config_parser.add_argument('--mem_len', type=int, default=10,
                                help="Memory length of transformer xl. Default is 1000.")
     config_parser.add_argument('--dropout_attn', type=float, default=0.2,
                                help='attention mechanism dropout rate. Default is 0.2.')
