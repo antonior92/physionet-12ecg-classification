@@ -11,20 +11,24 @@ class PretrainedTransformerBlock(nn.Module):
     def __init__(self, pretrained, output_size, freeze=False):
         super(PretrainedTransformerBlock, self).__init__()
         self.N_LEADS = 12
-        self.emb_size = pretrained._modules['decoder'].out_features
+        self.dim_model = pretrained._modules['decoder'].in_features
+
+        self.encoder = pretrained._modules['encoder']
         self.pos_encoder = pretrained._modules['pos_encoder']
         self.transformer_encoder = pretrained._modules['transformer_encoder']
 
         if freeze:
-            for param in self.transformer_encoder.parameters():
+            for param in self.encoder.parameters():
                 param.requires_grad = False
             for param in self.pos_encoder.parameters():
                 param.requires_grad = False
             for param in self.transformer_encoder.parameters():
                 param.requires_grad = False
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
 
         # self.encoder.out_features is also the output feature size of the transformer
-        self.decoder = nn.Linear(self.emb_size, output_size)
+        self.decoder = nn.Linear(self.dim_model, output_size)
         self.steps_concat = pretrained.steps_concat
 
     def forward(self, src):
@@ -34,11 +38,13 @@ class PretrainedTransformerBlock(nn.Module):
         # put in the right shape for transformer
         # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
         src2 = src1.transpose(0, 1)
+
         # process data (no mask in transformer used)
-        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
-        src3 = self.pos_encoder(src2)
-        out1 = self.transformer_encoder(src3)
+        src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
+        src4 = self.pos_encoder(src3)
+        out1 = self.transformer_encoder(src4)
         out2 = self.decoder(out1)
+
         # permute to have the same dimensions as in the input
         output = out2.permute(1, 2, 0)
         return output
@@ -96,8 +102,8 @@ class MyTransformer(nn.Module):
     def __init__(self, args):
         super(MyTransformer, self).__init__()
         self.N_LEADS = 12
-        self.num_masked_sampled = args['num_masked_samples']
-        self.perc_masked_samp = args['perc_masked_samp']
+        self.num_masked_samples = args['num_masked_samples']
+        self.perc_masked_samples = args['perc_masked_samp']
         self.dim_concat = int(self.N_LEADS * args['steps_concat'])
         self.dim_model = args["dim_model"]
         self.steps_concat = args['steps_concat']
@@ -116,13 +122,13 @@ class MyTransformer(nn.Module):
         # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
         src2 = src1.transpose(0, 1)
         # generate random mask
-        mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_sampled,
-                                             self.perc_masked_samp).to(next(self.parameters()).device)
+        mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples,
+                                             self.perc_masked_samples).to(next(self.parameters()).device)
         # generate triangular mask ('predict next sample').
         self.mask = mask
 
         # process data
-        src3 = self.encoder(src2)
+        src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
         src4 = self.pos_encoder(src3)
         out1 = self.transformer_encoder(src4, self.mask)
         out2 = self.decoder(out1)

@@ -28,10 +28,11 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     param = next(model.parameters())
     for i in range(args.num_trans_layers + 1):
         # empty = torch.empty(0, dtype=param.dtype, device=param.device)
-        empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model, dtype=param.dtype, device=param.device)
+        empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
+                            dtype=param.dtype, device=param.device, requires_grad=False)
         mems.append(empty)
     # loop over all batches
-    for i, batch in enumerate(train_loader):
+    for i, batch in enumerate(loader):
         # Send to device
         traces, _, ids, sub_ids = batch
         traces = traces.to(device=device)
@@ -40,7 +41,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         if len(mems) is not 0:
             # reset memory depending on sub_ids (required for transformer xl)
             # create mask to only change if sub_ids is zero
-            mask = (torch.tensor(sub_ids) != 0).float()
+            mask = (torch.tensor(sub_ids) != 0).float().to(device=param.device)
             mask = mask[None, :, None]
             mask = mask.repeat(args.mem_len, 1, args.dim_model)
             for i in range(args.num_trans_layers + 1):
@@ -115,9 +116,9 @@ if __name__ == '__main__':
                                help="Number of attention heads. Default is 5.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
                                help="Number of transformer blocks. Default is 2.")
-    config_parser.add_argument('--dim_model', type=int, default=50,
+    config_parser.add_argument('--dim_model', type=int, default=10,
                                help="Internal dimension of transformer. Default is 50.")
-    config_parser.add_argument('--dim_inner', type=int, default=50,
+    config_parser.add_argument('--dim_inner', type=int, default=10,
                                help="Size of the FF network in the transformer. Default is 50.")
     config_parser.add_argument('--num_masked_samples', type=int, default=8,
                                help="Number of consecutive samples masked for attention. Default is 8.")
@@ -126,7 +127,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input (default: 4)')
     # additional parameters for transformer xl
-    config_parser.add_argument('--mem_len', type=int, default=10,
+    config_parser.add_argument('--mem_len', type=int, default=100,
                                help="Memory length of transformer xl. Default is 1000.")
     config_parser.add_argument('--dropout_attn', type=float, default=0.2,
                                help='attention mechanism dropout rate. Default is 0.2.')
@@ -194,6 +195,18 @@ if __name__ == '__main__':
     # Define dataset
     train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
     valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
+    # BELOW IS TEMPORARY!!! make loaders shorter since batch_sizes will not be constant after idx.
+    for i in range(len(train_loader)):
+        if train_loader[i][0].shape[0] < args.batch_size:
+            idx = i
+            break
+    train_loader = train_loader[:idx]
+    for i in range(len(valid_loader)):
+        if valid_loader[i][0].shape[0] < args.batch_size:
+            idx = i
+            break
+    valid_loader = valid_loader[:idx]
+    # ABOVE IS TEMPORARY!!!
 
     # Get number of batches
     tqdm.write("Done!")
@@ -206,7 +219,8 @@ if __name__ == '__main__':
     elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
         model = MyRNN(vars(args))
     model.to(device=device)
-    tqdm.write("Done!")
+    message = "Done! Chosen model: {}".format(args.pretrain_model)
+    tqdm.write(message)
 
     tqdm.write("Define optimizer...")
     optimizer = torch.optim.Adam(model.parameters(), args.lr)

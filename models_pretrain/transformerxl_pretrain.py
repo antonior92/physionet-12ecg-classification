@@ -4,6 +4,45 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models_pretrain.masks_transformer import *
 
+"""class PretrainedTransformerXLBlock(nn.Module):
+    """  # Get reusable part from MyTransformerXL and return new model.
+# Include Linear block with the given output_size.
+"""
+    def __init__(self, pretrained, output_size, freeze=False):
+        super(PretrainedTransformerXLBlock, self).__init__()
+        self.N_LEADS = 12
+        self.emb_size = pretrained._modules['decoder'].out_features
+        self.pos_encoder = pretrained._modules['pos_encoder']
+        self.transformer_encoder = pretrained._modules['transformer_encoder']
+
+        if freeze:
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
+            for param in self.pos_encoder.parameters():
+                param.requires_grad = False
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
+
+        # self.encoder.out_features is also the output feature size of the transformer
+        self.decoder = nn.Linear(self.emb_size, output_size)
+        self.steps_concat = pretrained.steps_concat
+
+    def forward(self, src):
+        batch_size, n_feature, seq_len = src.shape
+        # concatenate neighboring samples in feature channel
+        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
+        # put in the right shape for transformer
+        # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
+        src2 = src1.transpose(0, 1)
+        # process data (no mask in transformer used)
+        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
+        src3 = self.pos_encoder(src2)
+        out1 = self.transformer_encoder(src3)
+        out2 = self.decoder(out1)
+        # permute to have the same dimensions as in the input
+        output = out2.permute(1, 2, 0)
+        return output"""
+
 
 class PositionalEncoding(nn.Module):
     def __init__(self, dmod):
@@ -29,7 +68,8 @@ class PositionwiseFF(nn.Module):
         self.d_inner = d_inner
 
         self.CoreNet = nn.Sequential(
-            nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
+            nn.Linear(d_model, d_inner),
+            nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(d_inner, d_model),
             nn.Dropout(dropout),
@@ -90,7 +130,8 @@ class MultiHeadAttnRelPos(nn.Module):
         #### compute attention probability
         if attn_mask is not None:
             # convert mask
-            attn_mask = attn_mask.float().masked_fill(attn_mask == float('-inf'), float(1.0)).bool()
+            attn_mask = attn_mask.float().masked_fill(attn_mask == float('-inf'), float(1.0)).bool().to(
+                device=cat.device)
             # apply mask
             attn_score.masked_fill_(attn_mask[:, :, None, None], -float('inf'))
 
@@ -151,6 +192,8 @@ class MyTransformerXL(nn.Module):
         super(MyTransformerXL, self).__init__()
 
         N_LEADS = 12
+        self.num_masked_samples = args['num_masked_samples']
+        self.perc_masked_samples = args['perc_masked_samp']
 
         self.bsz = args["batch_size"]
         self.seg_len = args["seq_length"]
@@ -208,15 +251,16 @@ class MyTransformerXL(nn.Module):
         # input is shape (batch_size, N_LEADS, seq_len)
         # and is reshaped to (seq_len, batch_size, N_LEADS)
         src = src.permute(2, 0, 1)
-        # compute word embeddings
-        src_enc = self.input_encoding(src)
-        core_out = self.drop(src_enc)
 
         # compute the attention mask
         mem_len_curr = mems[0].size(0)
         k_len = mem_len_curr + self.seg_len
-        attn_mask = generate_triangular_mask(self.seg_len, k_len)
+        attn_mask = generate_random_sequence_mask(self.seg_len, k_len, self.num_masked_samples,
+                                                  self.perc_masked_samples)
 
+        # compute word embeddings
+        src_enc = self.input_encoding(src)
+        core_out = self.drop(src_enc)
 
         # compute absolute position within the segment (end_indx : 0)
         pos_seq = torch.arange(k_len - 1, -1, -1.0, device=src_enc.device, dtype=src_enc.dtype)
