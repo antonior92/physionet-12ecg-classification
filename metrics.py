@@ -1,6 +1,6 @@
 import warnings
 import numpy as np
-from ecg_dataset import add_normal_column
+from data import add_normal_column
 from sklearn.metrics import precision_recall_curve
 from evaluate_12ECG_score import compute_beta_score
 
