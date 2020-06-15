@@ -17,25 +17,20 @@ from output_layer import OutputLayer, collapse
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    # Define pretrain output sequence length
-    if pretrain_stage_config is not None and pretrain_stage_config['pretrain_model'].lower() == 'transformer':
-        seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
-    else:
-        seq_len = config['seq_length']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
     removed_blocks = 0
-    for l in config['net_seq_lengh']:
-        if l > seq_len:
-            del config['net_seq_lengh'][0]
+    for l in config['net_seq_length']:
+        if l > config['seq_length']:
+            del config['net_seq_length'][0]
             del config['net_filter_size'][0]
             removed_blocks +=1
     if removed_blocks > 0:
         warn("The output of the pretrain stage is not consistent with the conv net "
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
-             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_lengh']))))
+             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
     # Get resnet
-    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
-                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
+    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
                       n_classes=len(CLASSES), kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
     if pretrain_stage_config is None:
@@ -150,7 +145,7 @@ if __name__ == '__main__':
                                     'a tensor with the given number of features (default: 64).')
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
-    config_parser.add_argument('--net_seq_lengh', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
+    config_parser.add_argument('--net_seq_length', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
                                help='number of samples per resnet layer (default: [4096, 1024, 256, 64, 16]).')
     config_parser.add_argument('--dropout_rate', type=float, default=0.5,
                                help='dropout rate (default: 0.5).')
@@ -170,7 +165,7 @@ if __name__ == '__main__':
                             help='input folder.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/output_prestage_transformer_old',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -287,7 +282,7 @@ if __name__ == '__main__':
     best_geom_mean = -np.Inf
     for ep in range(args.epochs):
         # Train and evaluate
-        train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
+        #train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
         y_true = multiclass_to_binaryclass(all_targets)
         # Collapse entries with the same id:

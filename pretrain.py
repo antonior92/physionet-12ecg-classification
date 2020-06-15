@@ -65,7 +65,10 @@ class PretrainedTransformerBlock(nn.Module):
     def __init__(self, pretrained, output_size,  freeze=False):
         super(PretrainedTransformerBlock, self).__init__()
         self.N_LEADS = 12
+        self.output_size = output_size
+        self.steps_concat = pretrained.steps_concat
         self.emb_size = pretrained._modules['decoder'].out_features
+
         self.pos_encoder = pretrained._modules['pos_encoder']
         self.transformer_encoder = pretrained._modules['transformer_encoder']
 
@@ -78,8 +81,7 @@ class PretrainedTransformerBlock(nn.Module):
                 param.requires_grad = False
 
         # self.encoder.out_features is also the output feature size of the transformer
-        self.decoder = nn.Linear(self.emb_size, output_size)
-        self.steps_concat = pretrained.steps_concat
+        self.decoder = nn.Linear(self.emb_size, self.output_size * self.steps_concat)
 
     def forward(self, src):
         batch_size, n_feature, seq_len = src.shape
@@ -93,8 +95,12 @@ class PretrainedTransformerBlock(nn.Module):
         src3 = self.pos_encoder(src2)
         out1 = self.transformer_encoder(src3)
         out2 = self.decoder(out1)
-        # permute to have the same dimensions as in the input
-        output = out2.permute(1, 2, 0)
+        # Go back to original, without neighboring samples concatenated
+        # out3.shape =  batch size, sequence length, n_feature
+        out3 = out2.transpose(0, 1).reshape(-1, seq_len, self.output_size)
+        # Put in the right shape for training stage input
+        output = out3.transpose(1, 2)
+
         return output
 
 
