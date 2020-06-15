@@ -349,16 +349,18 @@ if __name__ == '__main__':
 
     # Set device
     device = torch.device('cuda:0' if settings.cuda else 'cpu')
-    # Generate output folder if needed and save config file
+    # Set output folder
     if settings.folder[-1] == '/':
         folder = os.path.join(settings.folder, 'output_' +
                               str(datetime.datetime.now()).replace(":", "_").replace(" ", "_").replace(".", "_"))
-        try:
-            os.makedirs(folder)
-        except FileExistsError:
-            pass
     else:
         folder = settings.folder
+    # Create output folder if needed
+    try:
+        os.makedirs(folder)
+    except FileExistsError:
+        pass
+    # Save config
     with open(os.path.join(folder, 'pretrain_config.json'), 'w') as f:
         json.dump(vars(args), f, indent='\t')
     # Set seed
