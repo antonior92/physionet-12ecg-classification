@@ -25,12 +25,13 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     bar = tqdm(initial=0, leave=True, total=len(loader), desc=desc.format(ep, str_name, 0), position=0)
     # create initial memory (required for transformer xl)
     mems = []
-    param = next(model.parameters())
-    for i in range(args.num_trans_layers + 1):
-        # empty = torch.empty(0, dtype=param.dtype, device=param.device)
-        empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
-                            dtype=param.dtype, device=param.device, requires_grad=False)
-        mems.append(empty)
+    if args.pretrain_model.lower() == 'transformerxl':
+        param = next(model.parameters())
+        for i in range(args.num_trans_layers + 1):
+            # empty = torch.empty(0, dtype=param.dtype, device=param.device)
+            empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
+                                dtype=param.dtype, device=param.device, requires_grad=False)
+            mems.append(empty)
     # loop over all batches
     for i, batch in enumerate(loader):
         # Send to device
@@ -38,14 +39,15 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         traces = traces.to(device=device)
         # create model input and targets
         inp, target = model.get_input_and_targets(traces)
-        if len(mems) is not 0:
-            # reset memory depending on sub_ids (required for transformer xl)
-            # create mask to only change if sub_ids is zero
-            mask = (torch.tensor(sub_ids) != 0).float().to(device=param.device)
-            mask = mask[None, :, None]
-            mask = mask.repeat(args.mem_len, 1, args.dim_model)
-            for i in range(args.num_trans_layers + 1):
-                mems[i] = mems[i] * mask
+        if args.pretrain_model.lower() == 'transformerxl':
+            if len(mems) is not 0:
+                # reset memory depending on sub_ids (required for transformer xl)
+                # create mask to only change if sub_ids is zero
+                mask = (torch.tensor(sub_ids) != 0).float().to(device=param.device)
+                mask = mask[None, :, None]
+                mask = mask.repeat(args.mem_len, 1, args.dim_model)
+                for i in range(args.num_trans_layers + 1):
+                    mems[i] = mems[i] * mask
         if train:
             # Reinitialize grad
             model.zero_grad()
@@ -75,7 +77,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--pretrain_model', type=str, default='TransformerXL',
+    config_parser.add_argument('--pretrain_model', type=str, default='transformer',
                                help='type of pretraining net: LSTM, GRU, RNN, Transformer, Transformer XL (default)')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
@@ -194,16 +196,17 @@ if __name__ == '__main__':
     train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
     valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
     # BELOW IS TEMPORARY!!! make loaders shorter since batch_sizes will not be constant after idx.
-    for i in range(len(train_loader)):
-        if train_loader[i][0].shape[0] < args.batch_size:
-            idx = i
-            break
-    train_loader = train_loader[:idx]
-    for i in range(len(valid_loader)):
-        if valid_loader[i][0].shape[0] < args.batch_size:
-            idx = i
-            break
-    valid_loader = valid_loader[:idx]
+    if args.pretrain_model.lower() == 'transformerxl':
+        for i in range(len(train_loader)):
+            if train_loader[i][0].shape[0] < args.batch_size:
+                idx = i
+                break
+        train_loader = train_loader[:idx]
+        for i in range(len(valid_loader)):
+            if valid_loader[i][0].shape[0] < args.batch_size:
+                idx = i
+                break
+        valid_loader = valid_loader[:idx]
     # ABOVE IS TEMPORARY!!!
 
     # Get number of batches
