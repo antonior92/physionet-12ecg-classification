@@ -26,7 +26,7 @@ def execute(trial):
 
     os.chdir(main_path)
     #pretrain.py setup
-    pre_set_up = ('python pretrain.py --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    pre_set_up = ('python pretrain.py --n_total 12 --epochs 10 --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
         '--lr_factor {}'.format(trial.suggest_loguniform('pre_lr_factor',0.0001,1)), 
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
@@ -37,15 +37,17 @@ def execute(trial):
         '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
         '--lr_factor {}'.format(trial.suggest_loguniform('lr_factor',0.0001,1)),
         '--lr {}'.format(trial.suggest_loguniform('lr', 0.0001, 1)) ,
-        '--batch_size {}'.format(trial.suggest_int('batch_size', 15, 300)))
+        '--batch_size {}'.format(trial.suggest_int('batch_size', 15, 300)),
+        '--emb_size {}'.format(trial.suggest_int('pre_emb_size',25,100)))
     
     #pretrain comand
     pre_cmd = " ".join(pre_set_up)
-    subp.check_call(pre_cmd, shell=True)
+    #subp.check_call(pre_cmd, shell=True)s
+    os.system(pre_cmd)
     #train command
     train_cmd = " ".join(train_set_up)
-    subp.check_call(train_cmd, shell=True)
-    #os.system(cmd) caso falhe
+    #subp.check_call(train_cmd, shell=True)
+    os.system(train_cmd)    
     #reads csv file
     geom_mean = geom_mean_searcher(i)
 
@@ -66,15 +68,16 @@ def geom_mean_searcher(i):
 
 #defining search space
 search_space = {
-    'pre_lr':[0.01,0.001],
+    'pre_lr':[0.01],
     'pre_lr_factor':[0.1],
-    'pre_dropout_rate':[0.1, 0.2 , 0.3],
+    'pre_dropout_rate':[0.1, 0.2],
     'pre_num_heads':[2,5],
-    'kernel_size': [11, 17, 35],
-    'dropout_rate': [0.3, 0.5, 0.7 ],
+    'pre_emb_size':[50],
+    'kernel_size': [17],
+    'dropout_rate': [0.3],
     'lr_factor': [0.1],
-    'lr': [0.001, 0.01],
-    'batch_size': [32 ,64]
+    'lr': [0.01],
+    'batch_size': [32]
 }
 #calculates number of trials
 number_trials=1
