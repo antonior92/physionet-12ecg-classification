@@ -82,3 +82,91 @@ class OutputLayer(object):
         outputs.append(self.sigmoid(sigmoid_outputs))
 
         return torch.cat(outputs, dim=-1)
+
+
+class DxClasses(object):
+    CLASSES = ['AF', 'I-AVB', 'RBBB', 'LBBB', 'PAC', 'PVC', 'STD', 'STE']
+    IDX = [0, 0, 1, 1, 2, 3, 4, 5]
+
+    @property
+    def uniquedict(self):
+        idx = self.IDX
+        unique_idx = np.unique(idx)
+        m = dict(zip(unique_idx, [[] for _ in range(len(unique_idx))]))
+        for i, id in enumerate(idx):
+            m[id].append(i)
+        return m
+
+    @property
+    def mutually_exclusive(self):
+        m = self.uniquedict
+        return [l for l in list(m.values()) if len(l) > 1]
+
+    @property
+    def subidx(self):
+        m = self.uniquedict
+        subidx = []
+        for l in m.values():
+            for i in range(len(l)):
+                subidx.append(i)
+        return subidx
+
+    @property
+    def class_to_idx(self):
+        return dict(zip(self.CLASSES, self.IDX))
+
+    @property
+    def class_to_subidx(self):
+        return dict(zip(self.CLASSES, self.subidx))
+
+    def __len__(self):
+        return len(self.CLASSES)
+
+    @property
+    def len_target(self):
+        return len(self) - len(self.mutually_exclusive)
+
+    def multiclass_to_binaryclass(self, x):
+        x = np.atleast_2d(x)
+        n_samples = x.shape[0]
+        new_x = np.zeros((n_samples, len(self)), dtype=bool)
+
+        counter = 0
+        for i, mask in enumerate(self.mutually_exclusive):
+            for j, id in enumerate(mask):
+                new_x[:, id] = x[:, i] == (j + 1)
+                counter += 1
+        new_x[:, counter:] = x[:, len(self.mutually_exclusive):]
+        return np.squeeze(new_x)
+
+    def add_normal_column(self, x, prob=False):
+        x = np.atleast_2d(x)
+        n_samples, n_classes = x.shape
+        new_x = np.zeros((n_samples, n_classes + 1), dtype=x.dtype)
+        new_x[:, :-1] = x[:, :]
+        # If x is a vector of zeros and ones
+        if not prob:
+            new_x[:, -1] = x.sum(axis=1) == 0
+        # if x is a vector of probabilities
+        else:
+            counter = 0
+            new_x[:, -1] = 1.0
+            for mask in self.mutually_exclusive:
+                new_x[:, -1] = x[:, -1] * (1 - x[:, mask].sum(axis=1))
+                counter += len(mask)
+            x[:, -1] = x[:, -1] * np.prod(1 - x[:, counter:], axis=1)
+
+        return np.squeeze(new_x)
+
+    def get_target_from_labels(self, labels):
+        target = np.zeros(self.len_target)
+        for l in labels:
+            if l in self.CLASSES:
+                target[self.class_to_idx[l]] = self.class_to_subidx[l] + 1
+        return target
+
+
+
+
+
+

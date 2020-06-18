@@ -1,5 +1,5 @@
 import numpy as np
-import os, sys
+import os
 import torch
 from scipy.io import loadmat
 from scipy.signal import decimate, resample_poly
@@ -7,49 +7,7 @@ import itertools
 import collections.abc as abc
 from binpacking import to_constant_volume
 
-CLASSES = ['AF', 'I-AVB', 'RBBB', 'LBBB', 'PAC', 'PVC', 'STD', 'STE']
-mututally_exclusive = [
-    [0, 1],  # AF and I-AVB
-    [2, 3]   # RBBB and LBBB
-]
-n_classes = len(CLASSES)
-n_target_vec = len(CLASSES) - len(mututally_exclusive)
-class_to_idx = {'AF': 0, 'I-AVB': 0, 'RBBB': 1, 'LBBB': 1, 'PAC': 2, 'PVC': 3, 'STD': 4, 'STE': 5}
-class_to_number = {'AF': 1, 'I-AVB': 2, 'RBBB': 1, 'LBBB': 2, 'PAC': 1, 'PVC': 1, 'STD': 1, 'STE': 1}
-
-
-def multiclass_to_binaryclass(x):
-    x = np.atleast_2d(x)
-    n_samples = x.shape[0]
-    new_x = np.zeros((n_samples, n_classes), dtype=bool)
-
-    counter = 0
-    for i, mask in enumerate(mututally_exclusive):
-        for j, id in enumerate(mask):
-            new_x[:, id] = x[:, i] == (j + 1)
-            counter += 1
-    new_x[:, counter:] = x[:, len(mututally_exclusive):]
-    return np.squeeze(new_x)
-
-
-def add_normal_column(x, prob=False):
-    x = np.atleast_2d(x)
-    n_samples, n_classes = x.shape
-    new_x = np.zeros((n_samples, n_classes + 1), dtype=x.dtype)
-    new_x[:, :-1] = x[:, :]
-    # If x is a vector of zeros and ones
-    if not prob:
-        new_x[:, -1] = x.sum(axis=1) == 0
-    # if x is a vector of probabilities
-    else:
-        counter = 0
-        new_x[:, -1] = 1.0
-        for mask in mututally_exclusive:
-            new_x[:, -1] = x[:, -1]*(1 - x[:, mask].sum(axis=1))
-            counter += len(mask)
-        x[:, -1] = x[:, -1]*np.prod(1 - x[:, counter:], axis=1)
-
-    return np.squeeze(new_x)
+from output_layer import DxClasses
 
 
 def resample_ecg(trace, input_freq, output_freq):
@@ -69,10 +27,11 @@ def resample_ecg(trace, input_freq, output_freq):
     return new_trace
 
 
-def read_header(header_data):
+def read_header(header_data, dx):
     # Get attributes
     age = 57
     is_male = 1
+    labels = []
     for iline in header_data:
         # Remove \n
         iline = iline.split("\n")[0]
@@ -92,10 +51,7 @@ def read_header(header_data):
             labels = iline.split(': ')[1].split(',')
 
     # labels to vector
-    target = np.zeros(n_target_vec)
-    for l in labels:
-        if l in CLASSES:
-            target[class_to_idx[l]] = class_to_number[l]
+    target = dx.get_target_from_labels(labels)
 
     # Traces annotation
     tmp_hea = header_data[0].split(' ')
@@ -127,9 +83,9 @@ def read_header(header_data):
             'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq, 'signal_len': signal_len}
 
 
-def get_sample(header_data, data=None, new_freq=None):
+def get_sample(header_data, dx, data=None, new_freq=None):
     # Read header
-    attributes = read_header(header_data)
+    attributes = read_header(header_data, dx)
     # Get data
     if data is not None:
         # Change scale
@@ -145,8 +101,6 @@ def get_sample(header_data, data=None, new_freq=None):
     return attributes
 
 
-
-
 class ECGDataset(abc.Sequence):
     def __init__(self, input_folder, freq=500, only_header=False):
         # Save input files and folder
@@ -160,6 +114,7 @@ class ECGDataset(abc.Sequence):
         self.freq = freq
         self.only_header = only_header
         self.id_to_idx = dict(zip(self.get_ids(), range(len(self))))
+        self.dx = DxClasses()
 
     def use_only_header(self, only_header=True):
         self.only_header = only_header
@@ -184,7 +139,7 @@ class ECGDataset(abc.Sequence):
         input_header_file = os.path.join(new_file)
         with open(input_header_file, 'r') as f:
             header_data = f.readlines()
-        return get_sample(header_data, data, self.freq)
+        return get_sample(header_data, self.dx, data, self.freq)
 
     def __getitem__(self, idx):
         if isinstance(idx, (int, np.int, np.int64)):

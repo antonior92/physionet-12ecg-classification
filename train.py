@@ -1,4 +1,3 @@
-import os
 import json
 import argparse
 import datetime
@@ -8,13 +7,15 @@ import torch.nn as nn
 from warnings import warn
 from data import *
 from tqdm import tqdm
+
 from models.resnet import ResNet1d
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from metrics import get_metrics
-from output_layer import OutputLayer, collapse, get_collapse_fun
+from output_layer import OutputLayer, collapse, DxClasses
 
 
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
+    dx = DxClasses()
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
@@ -29,9 +30,9 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
              + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
     # Get resnet
-    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
-                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
-                      n_classes=len(CLASSES), kernel_size=config['kernel_size'],
+    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
+                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
+                      n_classes=len(dx), kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
     # Get final prediction stage
     if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
@@ -289,9 +290,11 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
+    # Define classes
+    dx = DxClasses()
     # Get all targets
     targets = np.stack([s['output'] for s in dset.use_only_header(True)[train_ids]])
-    targets_bin = multiclass_to_binaryclass(targets)
+    targets_bin = dx.multiclass_to_binaryclass(targets)
     threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
     tqdm.write("\t\t\t   = AF:{:.2f},I-AVB:{:.2f},RBBB:{:.2f},LBBB:{:.2f},PAC:{:.2f},PVC:{:.2f},STD:{:.2f},STE:{:.2f}"
@@ -312,7 +315,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define loss...")
-    out_layer = OutputLayer(args.batch_size, mututally_exclusive, device)
+    out_layer = OutputLayer(args.batch_size, dx.mutually_exclusive, device)
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
@@ -332,7 +335,7 @@ if __name__ == '__main__':
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        metrics = get_metrics(y_true, y_pred)
+        metrics = get_metrics(dx.add_normal_column(y_true), dx.add_normal_column(y_pred))
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \
