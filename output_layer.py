@@ -3,7 +3,7 @@ import numpy as np
 
 
 def collapse(x, ids, fn, unique_ids=None):
-    """Colapse arrays with the same ids using fn.
+    """Collapse arrays with the same ids using fn.
 
     Be `x` an array (N, *) and ids a sequence with N elements, possibly with repeated entries, `M` unique ids
     return a tuple containing the unique ids and a array with shape (M, *)  where the i-th entry

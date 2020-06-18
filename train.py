@@ -1,6 +1,7 @@
 import os
 import json
 import torch
+import torch.nn as nn
 import argparse
 import datetime
 import random
@@ -23,7 +24,7 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
         if l > config['seq_length']:
             del config['net_seq_length'][0]
             del config['net_filter_size'][0]
-            removed_blocks +=1
+            removed_blocks += 1
     if removed_blocks > 0:
         warn("The output of the pretrain stage is not consistent with the conv net "
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
@@ -47,11 +48,53 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     return model
 
 
+# %% Final prediction stage
+
+class predication_stage(nn.Module):
+    def __init__(self, n_diagnoses=8, hidden_size=20, num_layers=1):
+        super(predication_stage, self).__init__()
+        self.n_diagnoses = n_diagnoses
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.rnn = nn.GRU(input_size=n_diagnoses, hidden_size=hidden_size, num_layers=num_layers)
+        self.linear = nn.Linear(hidden_size, n_diagnoses)
+
+    def forward(self, inp, hidd):
+        # input is of size (seq_len, batch_size, n_diagnoses)
+        # hidden layer is of size (num_layer, batch_size, hidden_size)
+        out1, hidden = self.rnn(inp, hidd)
+        output = self.linear(out1)
+
+        # output is of size (seq_len, batch_size, hidden_size) but only last sequence point is outputted
+        # hidden is of size (num_layer, batch_size, hidden_size)
+        return output[-1], hidden
+
+    def init_hidden_layer(self, batch_size):
+        hidden_layer = torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        input_state = torch.zeros(1, batch_size, self.n_diagnoses)
+
+        return input_state, hidden_layer
+
+    """def get_rnn_input(self, model_out, hidden_layer, sub_ids):
+        # set the hidden layer for all batches to zero where sub_ids are zero
+
+        # for first iteration model_output need to have seq_len=1
+        # then extend it depending on the longest running not changed sub_id
+        # if a sub_id was changed to zero, then set the rnn_input to zero
+        stopvar = 1
+        rnn_input = model_out
+        return rnn_input, hidden_layer"""
+
+
 # %% Train model
-def train(ep, model, optimizer, train_loader, out_layer, device):
+def train(ep, model, pred_stage, optimizer, train_loader, out_layer, device):
     model.train()
     total_loss = 0
     n_entries = 0
+    batch_size = train_loader[0][0].shape[0]
+    #### DOESNT WORK IN LONG RUN SINCE BATCH_SIZE DOES NOT STAY THE SAME
+    rnn_input_state, hidden_layer = pred_stage.init_hidden_layer(batch_size)
     train_desc = "Epoch {:2d}: train - Loss: {:.6f}"
     train_bar = tqdm(initial=0, leave=True, total=len(train_loader),
                      desc=train_desc.format(ep, 0), position=0)
@@ -59,13 +102,46 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
         traces, target, ids, sub_ids = batch
         traces = traces.to(device=device)
         target = target.to(device=device)
+        # current batch_size
+        batch_size = traces.shape[0]
         # Reinitialize grad
         model.zero_grad()
         # Forward pass
-        output = model(traces)
+        model_out = model(traces)
+        # prediction stage
+        # rnn_input, hidden_layer = pred_stage.get_rnn_input(model_out, hidden_layer, sub_ids)
+
+        # Get a state tensor which uses a sequence length which is the max number of running exams (in sub_ids)
+        max_seq_len = max(sub_ids) + 1
+        rnn_input_state = torch.cat([rnn_input_state[:, :batch_size].detach(), model_out.detach().unsqueeze(0)], dim=0)[
+                          -max_seq_len:]
+        # create mask
+        mask = torch.tensor(sub_ids)
+        # apply mask as: set rnn_input_state[-sub_ids[i]:,i,:]=0 if sub_ids[i]=0
+            # see goodnotes for how the mask should look like and some ideas on how to implement it
+        # get sub_ids of same shape as hidden_layer
+        # hidden_layer.shape = (num_layers, batch_size, hidden_size)
+        num_layers = hidden_layer.shape[0]
+        hidden_size = hidden_layer.shape[2]
+
+        # create mask from sub_ids of dimension as hidden_layer
+        mask = torch.tensor(sub_ids).view(1, -1, 1)
+        mask = mask.repeat(num_layers, 1, hidden_size)
+        # apply sub_ids as mask: set hidden_layer[:,i,:]=0 if sub_ids[i]==0
+        hidden_layer = hidden_layer.masked_fill(mask == 0, float(0))
+        # detach values which are masked
+        mask_ind = (mask == 0).nonzero()
+        ind_0 = mask_ind[:, 0]
+        ind_1 = mask_ind[:, 1]
+        ind_2 = mask_ind[:, 2]
+        hidden_layer[ind_0, ind_1, ind_2] = hidden_layer[ind_0, ind_1, ind_2].detach()
+        # run prediction stage rnn
+        output, hidden_layer = pred_stage(rnn_input_state, hidden_layer)
+
+        # softmax and sigmoid layer implicitly contained in the loss
         loss = out_layer.loss(output, target)
         # Backward pass
-        loss.backward()
+        loss.backward(retain_graph=True)  # retain_graph should be removed!!
         # Optimize
         optimizer.step()
         # Update
@@ -140,7 +216,7 @@ if __name__ == '__main__':
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
     config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
                                help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
-    config_parser.add_argument('--pretrain_output_size', type=int,  default=64,
+    config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
@@ -154,10 +230,10 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--finetuning',  action='store_true',
-                                help='when there is a pre-trained model, by default it '
-                                     'freezes the weights of the pre-trained model, but with this option'
-                                     'these weight will be fine-tunned during training.')
+    config_parser.add_argument('--finetuning', action='store_true',
+                               help='when there is a pre-trained model, by default it '
+                                    'freezes the weights of the pre-trained model, but with this option'
+                                    'these weight will be fine-tunned during training.')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -198,8 +274,8 @@ if __name__ == '__main__':
     rng = random.Random(args.seed)
     # Check if there is pretrained model in the given folder
     try:
-        #
-        ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'), map_location=lambda storage, loc: storage)
+        ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'),
+                                         map_location=lambda storage, loc: storage)
         config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
         with open(config_pretrain_stage, 'r') as f:
             config_dict_pretrain_stage = json.load(f)
@@ -264,6 +340,7 @@ if __name__ == '__main__':
     tqdm.write("Define model...")
     model = get_model(vars(args), config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
+    pred_stage = predication_stage(n_diagnoses=8)
     tqdm.write("Done!")
 
     tqdm.write("Define optimizer...")
@@ -282,7 +359,7 @@ if __name__ == '__main__':
     best_geom_mean = -np.Inf
     for ep in range(args.epochs):
         # Train and evaluate
-        #train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
+        train_loss = train(ep, model, pred_stage, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
         y_true = multiclass_to_binaryclass(all_targets)
         # Collapse entries with the same id:
@@ -297,7 +374,7 @@ if __name__ == '__main__':
         metrics = get_metrics(y_true, y_pred)
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \
+                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \
             .format(ep, train_loss, valid_loss, learning_rate,
                     metrics['f_beta'], metrics['g_beta'],
                     metrics['geom_mean'])
@@ -329,4 +406,3 @@ if __name__ == '__main__':
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'final_model.pth'))
             tqdm.write("Save model!")
-
