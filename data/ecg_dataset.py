@@ -27,7 +27,7 @@ def resample_ecg(trace, input_freq, output_freq):
     return new_trace
 
 
-def read_header(header_data, dx):
+def read_header(header_data):
     # Get attributes
     age = 57
     is_male = 1
@@ -49,9 +49,6 @@ def read_header(header_data, dx):
                 is_male = 1
         elif iline.startswith('#Dx'):
             labels = iline.split(': ')[1].split(',')
-
-    # labels to vector
-    target = dx.get_target_from_labels(labels)
 
     # Traces annotation
     tmp_hea = header_data[0].split(' ')
@@ -79,15 +76,17 @@ def read_header(header_data, dx):
         except:
             pass
 
-    return {'id': id, 'age': age, 'is_male': is_male, 'output': target,
+    return {'id': id, 'age': age, 'is_male': is_male, 'labels': labels,
             'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq, 'signal_len': signal_len}
 
 
 def get_sample(header_data, dx, data=None, new_freq=None):
     # Read header
-    attributes = read_header(header_data, dx)
+    attributes = read_header(header_data)
     # Get data
     if data is not None:
+        # Get target vector
+        attributes['output'] = dx.get_target_from_labels(attributes['labels'])
         # Change scale
         data_with_gain = (data - attributes['baseline'][:, None]) / attributes['gain_lead'][:, None]
         # Resample
@@ -122,6 +121,14 @@ class ECGDataset(abc.Sequence):
 
     def get_ids(self):
         return [f.split('.mat')[0] for f in self.input_file]
+
+    def get_classes(self):
+        classes = set()
+        for idx in range(len(self)):
+            header = self._getsample(idx, only_header=True)
+            for l in header['labels']:
+                classes.add(l)
+        return sorted(classes)
 
     def __len__(self):
         return len(self.input_file)
