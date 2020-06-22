@@ -7,8 +7,6 @@ import itertools
 import collections.abc as abc
 from binpacking import to_constant_volume
 
-from output_layer import DxClasses
-
 
 def resample_ecg(trace, input_freq, output_freq):
     trace = np.atleast_1d(trace).astype(float)
@@ -101,7 +99,7 @@ def get_sample(header_data, dx, data=None, new_freq=None):
 
 
 class ECGDataset(abc.Sequence):
-    def __init__(self, input_folder, dx_classes, freq=500, only_header=False):
+    def __init__(self, input_folder, dx_classes=None, freq=500, only_header=False):
         # Save input files and folder
         input_files = []
         for f in os.listdir(input_folder):
@@ -129,6 +127,15 @@ class ECGDataset(abc.Sequence):
             for l in header['labels']:
                 classes.add(l)
         return sorted(classes)
+
+    def get_ocurrences(self, classes):
+        class_to_idx = dict(zip(classes, range(len(classes))))
+        counts = np.zeros(len(classes), dtype=int)
+        for idx in range(len(self)):
+            header = self._getsample(idx, only_header=True)
+            for l in header['labels']:
+                counts[class_to_idx[l]] += 1
+        return counts
 
     def __len__(self):
         return len(self.input_file)
@@ -270,3 +277,23 @@ def get_batchloader(dset, ids, batch_size=32, length=4096, min_length=2000):
     x = LoI2IoL(modified_dset)
     batch_loader = map(collapsing_fn, x)
     return list(batch_loader)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Generate short summary of the dataset.')
+    parser.add_argument('path', help='path to the dataset root folder')
+    args = parser.parse_args()
+
+    dset = ECGDataset(args.path)
+    n = len(dset)
+    classes = dset.get_classes()
+    occurences = dset.get_ocurrences(classes)
+
+
+    print('dataset length = {}'.format(n))
+    print('{} classes'.format(len(classes)))
+    print(','.join(['{}'.format(c) for c in classes]))
+    print(','.join('{:d}'.format(c) for c in occurences))
+    print(','.join('{:2.2f}'.format(c/n * 100) for c in occurences))
