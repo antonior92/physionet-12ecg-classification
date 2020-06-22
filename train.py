@@ -14,8 +14,7 @@ from metrics import get_metrics
 from output_layer import OutputLayer, collapse, DxClasses
 
 
-def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
-    dx = DxClasses()
+def get_model(config, dx, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
@@ -201,6 +200,8 @@ if __name__ == '__main__':
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
                             help='input folder.')
+    sys_parser.add_argument('--classes', type=str, default='./classes.txt',
+                            help='File specifying classes: names and mutually exclusiveness.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
     sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/output_prestage_transformer_old',
@@ -252,8 +253,15 @@ if __name__ == '__main__':
         pretrain_ids = []
         tqdm.write("Did not found pretrained model!")
 
+    # Define and save classes
+    tqdm.write("Define classes...")
+    dx = DxClasses.read_csv(os.path.join(settings.classes))
+    dx.to_csv(os.path.join(folder, 'classes.txt'))
+    tqdm.write("Define done...")
+
     tqdm.write("Define dataset...")
-    dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    dset = ECGDataset(settings.input_folder, dx, freq=args.sample_freq)
+    # ids
     all_ids = dset.get_ids()
     set_all_ids = set(all_ids)
     # Get pretrained ids
@@ -290,10 +298,8 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
-    # Define classes
-    dx = DxClasses()
     # Get all targets
-    targets = np.stack([s['output'] for s in dset.use_only_header(True)[train_ids]])
+    targets = np.stack([dx.get_target_from_labels(s['labels']) for s in dset.use_only_header(True)[train_ids]])
     targets_bin = dx.multiclass_to_binaryclass(targets)
     threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
@@ -302,7 +308,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    model = get_model(vars(args), config_dict_pretrain_stage, ckpt_pretrain_stage)
+    model = get_model(vars(args), dx, config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
     tqdm.write("Done!")
 
@@ -315,7 +321,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define loss...")
-    out_layer = OutputLayer(args.batch_size, dx.mutually_exclusive, device)
+    out_layer = OutputLayer(args.batch_size, dx, device)
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
@@ -325,7 +331,7 @@ if __name__ == '__main__':
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
-        y_true = multiclass_to_binaryclass(all_targets)
+        y_true = dx.multiclass_to_binaryclass(all_targets)
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(vars(args)))
         _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)

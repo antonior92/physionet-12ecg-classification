@@ -34,10 +34,10 @@ def collapse(x, ids, fn, unique_ids=None):
 
 
 class OutputLayer(object):
-    def __init__(self, bs, softmax_mask, device, dtype=torch.float32):
+    def __init__(self, bs, dx, device, dtype=torch.float32):
         # Save zero tensor to be used as 'normal' case in the softmax
         self.normal = torch.zeros((bs, 1), device=device, dtype=dtype)
-        self.softmax_mask = softmax_mask
+        self.softmax_mask = dx.mutually_exclusive
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='sum')
         self.ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
         self.sigmoid = torch.nn.Sigmoid()
@@ -85,12 +85,22 @@ class OutputLayer(object):
 
 
 class DxClasses(object):
-    CLASSES = ['AF', 'I-AVB', 'RBBB', 'LBBB', 'PAC', 'PVC', 'STD', 'STE']
-    IDX = [0, 0, 1, 1, 2, 3, 4, 5]
+
+    @classmethod
+    def read_csv(cls, path):
+        with open(path, 'r') as f:
+            classes, idx_classes = f.read().split('\n')
+            classes = classes.split(',')
+            idx_classes = [int(i) for i in idx_classes.split(',')]
+        return cls(classes, idx_classes)
+
+    def __init__(self, classes, idx=None):
+        self.classes = classes
+        self.idx = idx if idx is not None else range(len(classes))
 
     @property
     def uniquedict(self):
-        idx = self.IDX
+        idx = self.idx
         unique_idx = np.unique(idx)
         m = dict(zip(unique_idx, [[] for _ in range(len(unique_idx))]))
         for i, id in enumerate(idx):
@@ -113,14 +123,14 @@ class DxClasses(object):
 
     @property
     def class_to_idx(self):
-        return dict(zip(self.CLASSES, self.IDX))
+        return dict(zip(self.classes, self.idx))
 
     @property
     def class_to_subidx(self):
-        return dict(zip(self.CLASSES, self.subidx))
+        return dict(zip(self.classes, self.subidx))
 
     def __len__(self):
-        return len(self.CLASSES)
+        return len(self.classes)
 
     @property
     def len_target(self):
@@ -161,10 +171,15 @@ class DxClasses(object):
     def get_target_from_labels(self, labels):
         target = np.zeros(self.len_target)
         for l in labels:
-            if l in self.CLASSES:
+            if l in self.classes:
                 target[self.class_to_idx[l]] = self.class_to_subidx[l] + 1
         return target
 
+    def to_csv(self, path):
+        with open(path, 'w') as f:
+            f.write(','.join(self.classes))
+            f.write('\n')
+            f.write(','.join([str(i) for i in self.idx]))
 
 
 

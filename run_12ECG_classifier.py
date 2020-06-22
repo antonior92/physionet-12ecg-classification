@@ -3,16 +3,15 @@ import os
 import json
 import torch
 from train import get_model
-from output_layer import OutputLayer
-from data import (get_sample, SplitLongSignals, CLASSES, mututally_exclusive,
-                  add_normal_column)
+from output_layer import OutputLayer, DxClasses
+from data import (get_sample, SplitLongSignals)
 
 
 def run_12ECG_classifier(data, header_data, classes, mdl):
     # Get model specifications
-    model, out_layer, threshold, config_dict, device = mdl
+    model, dx, out_layer, threshold, config_dict, device = mdl
     # Get sample
-    sample = get_sample(header_data, data, config_dict['sample_freq'])
+    sample = get_sample(header_data, dx, data, config_dict['sample_freq'])
     # Get trace
     model.eval()
     # Run model
@@ -28,11 +27,11 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         y_pred = (y_score > threshold).astype(int)
 
         # Add column corresponding to normal
-        y_score = add_normal_column(y_score, prob=True)
-        y_pred = add_normal_column(y_pred, prob=False)
+        y_score = dx.add_normal_column(y_score, prob=True)
+        y_pred = dx.add_normal_column(y_pred, prob=False)
 
         # Reorder according to vector classes
-        current_order = CLASSES + ['Normal']
+        current_order = dx.classes + ['Normal']
         dict_current_order = dict(zip(current_order, range(len(current_order))))
         new_idx = [dict_current_order[c] for c in classes]
         y_score = y_score[new_idx]
@@ -53,6 +52,9 @@ def load_12ECG_model():
     with open(config, 'r') as f:
         config_dict = json.load(f)
 
+    # get classes
+    dx = DxClasses.read_csv(os.path.join(model_folder, 'classes.txt'))
+
     # Get pretrained stage config (if available)
     try:
         config_pretrain_stage = os.path.join(model_folder, 'pretrain_config.json')
@@ -62,7 +64,7 @@ def load_12ECG_model():
         config_dict_pretrain_stage = None
 
     # Define model
-    model = get_model(config_dict, config_dict_pretrain_stage)
+    model = get_model(config_dict, dx, config_dict_pretrain_stage)
     model.load_state_dict(ckpt["model"])
 
     # Device
@@ -73,6 +75,6 @@ def load_12ECG_model():
     threshold = ckpt['threshold']
 
     # Output layer
-    out_layer = OutputLayer(config_dict['batch_size'], mututally_exclusive, device)
+    out_layer = OutputLayer(config_dict['batch_size'], dx, device)
 
-    return model, out_layer, threshold, config_dict, device
+    return model, dx, out_layer, threshold, config_dict, device

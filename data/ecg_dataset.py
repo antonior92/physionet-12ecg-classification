@@ -101,7 +101,7 @@ def get_sample(header_data, dx, data=None, new_freq=None):
 
 
 class ECGDataset(abc.Sequence):
-    def __init__(self, input_folder, freq=500, only_header=False):
+    def __init__(self, input_folder, dx_classes, freq=500, only_header=False):
         # Save input files and folder
         input_files = []
         for f in os.listdir(input_folder):
@@ -113,7 +113,7 @@ class ECGDataset(abc.Sequence):
         self.freq = freq
         self.only_header = only_header
         self.id_to_idx = dict(zip(self.get_ids(), range(len(self))))
-        self.dx = DxClasses()
+        self.dx = dx_classes
 
     def use_only_header(self, only_header=True):
         self.only_header = only_header
