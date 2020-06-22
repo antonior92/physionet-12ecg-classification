@@ -9,22 +9,22 @@ import subprocess as subp
 #define paths 
 
 main_path = 'C:\\Users\\danie\\OneDrive\\Área de Trabalho\\IC\\Projetos\\Physionet Challenge\\physionet-12ecg-classification'
-dump_file_path = 'C:\\Users\\danie\\OneDrive\\Área de Trabalho\\optuna test\\12ECG_optuna.pkl'
+#dump_file_path = 'C:\\Users\\danie\\OneDrive\\Área de Trabalho\\optuna test\\12ECG_optuna.pkl'
 os.chdir(main_path)
 
 
 def execute(trial):
     i = trial._trial_id
-    if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) == False:
-        os.mkdir('outputs gridsearch')
-    os.chdir("".join((main_path,'\\outputs gridsearch')))
-    #create directory for each iteration with a specific name that can later be accessed( removed because train.py already creates it)
+    if i != 0 :
+        del_unworthy_trials(os.path.join(main_path,'outputs gridsearch'), study.best_trial.number)
+    
+    #create directory for each iteration with a specific name that can later be accessed(removed because pretrain.py and train.py already creates it)
+    #os.chdir("".join((main_path,'\\outputs gridsearch')))
     #if os.path.exists('iteretion{}'.format(i)):
     #    shutil.rmtree('iteretion{}'.format(i))
     #os.makedirs('iteretion{}'.format(i))
-
-
-    os.chdir(main_path)
+    #os.chdir(main_path)
+    
     #pretrain.py setup
     pre_set_up = ('python pretrain.py --n_total 12 --epochs 10 --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
@@ -66,6 +66,17 @@ def geom_mean_searcher(i):
                 best_geom_mean = float(line['geom_mean'])
     return(best_geom_mean)
 
+#function to delete models that werent best in order to avoid memory overload
+def del_unworthy_trials(dir_name, best_iter):
+    test = os.listdir(dir_name)
+
+    for item in test:
+        if item != "iteration{}".format(best_iter):
+         for file in os.listdir(os.path.join(dir_name,item)):  
+            if file.endswith(".pth"):
+                 os.remove(os.path.join(dir_name, item, file))
+    return
+
 #defining search space
 search_space = {
     'pre_lr':[0.01],
@@ -79,6 +90,10 @@ search_space = {
     'lr': [0.01],
     'batch_size': [32]
 }
+#creates gridsearch folder
+if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) == False:
+        os.mkdir('outputs gridsearch')
+
 #calculates number of trials
 number_trials=1
 for key, value in search_space.items() :
@@ -87,20 +102,22 @@ for key, value in search_space.items() :
 #sets up the study and calls the function
 study= optuna.create_study(sampler=optuna.samplers.GridSampler(search_space), direction='maximize')
 study.optimize(execute, n_trials = number_trials)
-joblib.dump(study, dump_file_path)
+#joblib.dump(study, dump_file_path)
 
-#afterexecuting shows best parameters
-print('\n',study.best_trial)
+#delete the model of the last iteration if it isnt the best value
+del_unworthy_trials(os.path.join(main_path,'outputs gridsearch'), study.best_trial.number)
+
+#after executing shows best parameters
+print('\nBest study trial: ',study.best_trial)
 print('\nParams with the best results:',study.best_params)
 print('\nThe best value was:',study.best_value)
 
 
 #todo: 
-#testar hiperparametros
-#adicionar pretreino
 #deletar modelos para não estourar memória
+    #posso usar study.best_trial.number para remover modelo das pastas que não forem o best trial. Adicionar código na linha 53.
 #argparse para simplificar codigo
-
+#codigo não funciona quando a pasta grid search tem iterações antigas nela
 
 """
 Done:
@@ -111,4 +128,6 @@ figure out how to pass i as a working argument (used trial._trial_id to solve pr
 finish writing the code to show the results for each parameter and the best result found
 #fix .join's
 #testar codigo
+#adicionar pretreino
+#testar hiperparametros
 """
