@@ -27,11 +27,11 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         y_pred = (y_score > threshold).astype(int)
 
         # Add column corresponding to normal
-        y_score = dx.add_normal_column(y_score, prob=True)
-        y_pred = dx.add_normal_column(y_pred, prob=False)
+        y_score = dx.add_null_column(y_score, prob=True)
+        y_pred = dx.add_null_column(y_pred, prob=False)
 
         # Reorder according to vector classes
-        current_order = dx.classes + ['Normal']
+        current_order = dx.all_classes
         dict_current_order = dict(zip(current_order, range(len(current_order))))
         new_idx = [dict_current_order[c] for c in classes]
         y_score = y_score[new_idx]

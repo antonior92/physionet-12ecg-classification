@@ -341,7 +341,7 @@ if __name__ == '__main__':
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        metrics = get_metrics(dx.add_normal_column(y_true), dx.add_normal_column(y_pred))
+        metrics = get_metrics(dx.add_null_column(y_true), dx.add_null_column(y_pred))
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \

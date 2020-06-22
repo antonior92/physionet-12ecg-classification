@@ -86,17 +86,10 @@ class OutputLayer(object):
 
 class DxClasses(object):
 
-    @classmethod
-    def read_csv(cls, path):
-        with open(path, 'r') as f:
-            classes, idx_classes = f.read().split('\n')
-            classes = classes.split(',')
-            idx_classes = [int(i) for i in idx_classes.split(',')]
-        return cls(classes, idx_classes)
-
-    def __init__(self, classes, idx=None):
+    def __init__(self, classes, null_class='Normal', idx=None):
         self.classes = classes
         self.idx = idx if idx is not None else range(len(classes))
+        self.null_class = null_class
 
     @property
     def uniquedict(self):
@@ -106,6 +99,10 @@ class DxClasses(object):
         for i, id in enumerate(idx):
             m[id].append(i)
         return m
+
+    @property
+    def all_classes(self):
+        return self.classes + [self.null_class]
 
     @property
     def mutually_exclusive(self):
@@ -149,7 +146,7 @@ class DxClasses(object):
         new_x[:, counter:] = x[:, len(self.mutually_exclusive):]
         return np.squeeze(new_x)
 
-    def add_normal_column(self, x, prob=False):
+    def add_null_column(self, x, prob=False):
         x = np.atleast_2d(x)
         n_samples, n_classes = x.shape
         new_x = np.zeros((n_samples, n_classes + 1), dtype=x.dtype)
@@ -175,13 +172,19 @@ class DxClasses(object):
                 target[self.class_to_idx[l]] = self.class_to_subidx[l] + 1
         return target
 
+    @classmethod
+    def read_csv(cls, path):
+        with open(path, 'r') as f:
+            classes, idx_classes = f.read().split('\n')
+            classes = classes.split(',')
+            idx_classes = [int(i) for i in idx_classes.split(',')]
+        return cls(classes[1:], classes[0], idx_classes[1:])
+
     def to_csv(self, path):
         with open(path, 'w') as f:
+            f.write(self.null_class + ',')
             f.write(','.join(self.classes))
             f.write('\n')
+            f.write('-1,')
             f.write(','.join([str(i) for i in self.idx]))
-
-
-
-
 
