@@ -10,17 +10,40 @@ The requirements are described in `requirements.txt`.
 
 
 ## Downloading the dataset from PhysioNet
-You can download the training data from this link: 
-https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_CPSC.tar.gz
+The training data can be downloaded from this links (You can use the MD5 hash to verify the integrity of the tar.gz file.):
+- CPSC2018 training set, 6,877 recordings: 
+[link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_CPSC.tar.gz); 
+MD5-hash: 7b6b1f1ab1b4c59169c639d379575a87
+- China 12-Lead ECG Challenge Database (unused CPSC2018 data), 3,453 recordings: 
+[link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_2.tar.gz);
+ MD5-hash: 36b409ee2b46aa6f1d2bef99b8451925
+- St Petersburg INCART 12-lead Arrhythmia Database, 74 recordings: 
+[link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_StPetersburg.tar.gz);
+ MD5-hash: 440ca079f137fb16259511bb6105f134
+- PTB Diagnostic ECG Database, 516 recordings: 
+[link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_PTB.tar.gz); 
+MD5-hash: 4035a2b496067c4331eecab74695bc67
+- PTB-XL electrocardiography Database, 21,837 recordings:
+[link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_PTB-XL.tar.gz);
+ MD5-hash: a893319c53f77d8e6a76ed3af38be99e
+- Georgia 12-Lead ECG Challenge Database, 10,344 recordings: 
+[link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_E.tar.gz);
+ MD5-hash: 594c8cbc02a0aec4c179d2f019b09a7a
 
 Alternatively, from the command line:
 ```
-wget -O PhysioNetChallenge2020_Training_CPSC.tar.gz \
-https://cloudypipeline.com:9555/api/download/physionet2020training/PhysioNetChallenge2020_Training_CPSC.tar.gz/
+for DSET in Training_CPSC Training_2 Training_StPetersburg Training_PTB Training_PTB-XL Training_E;
+do
+wget -O PhysioNetChallenge2020_$DSET.tar.gz \
+https://cloudypipeline.com:9555/api/download/physionet2020training/PhysioNetChallenge2020_$DSET.tar.gz/
+done;
 ```
 And, them, extract the data:
 ```
-tar -xf PhysioNetChallenge2020_Training_CPSC.tar.gz 
+for DSET in Training_E;
+do
+mkdir ./$DSET && tar -xf PhysioNetChallenge2020_$DSET.tar.gz -C ./$DSET --strip-components=1
+done;
 ```
 
 ## Training and evaluating
