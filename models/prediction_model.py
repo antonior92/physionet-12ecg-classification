@@ -36,18 +36,19 @@ class RNNPredictionStage(nn.Module):
         # output is of size (seq_len, batch_size, hidden_size) but only last sequence point is outputted
         return output[-1]
 
-    def init_hidden_layer(self, batch_size):
+    def init_hidden_layer(self, batch_size, device):
         # hidden is of size (num_layer, batch_size, hidden_size)
-        return torch.zeros(self.num_layers, batch_size, self.hidden_size)
+        return torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
 
     def get_rnn_input(self, model_out, hidden_layer):
+        device = model_out.device
         batch_size = model_out.shape[0]
         # hidden layer definition
         if hidden_layer is None:
-            hidden_layer_new = self.init_hidden_layer(batch_size)
+            hidden_layer_new = self.init_hidden_layer(batch_size, device)
         else:
             # create mask from sub_ids of dimension as hidden_layer
-            mask = torch.tensor(self.sub_ids).view(1, -1, 1)
+            mask = torch.tensor(self.sub_ids, device=device).view(1, -1, 1)
             mask = mask.repeat(self.num_layers, 1, self.hidden_size)
             # apply sub_ids as mask: set hidden_layer[:,i,:]=0 if sub_ids[i]==0
             hidden_layer_new = hidden_layer[:, :batch_size].masked_fill(mask == 0, float(0))
