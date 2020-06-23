@@ -11,8 +11,9 @@ from warnings import warn
 from data import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
+from models.prediction_model import RNNPredictionStage, DummyPredictionStage
 from metrics import get_metrics
-from output_layer import OutputLayer, collapse
+from output_layer import OutputLayer, collapse, get_collapse_fun
 
 
 def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
@@ -34,8 +35,15 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
                       n_classes=len(CLASSES), kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
+    # Get final prediction stage
+    if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
+        pred_stage = RNNPredictionStage(config, len(CLASSES))
+    else:
+        pred_stage = DummyPredictionStage()
+    # get pretrain model if available and combine all models
     if pretrain_stage_config is None:
-        model = resnet
+        # combine the models
+        model = nn.Sequential(resnet, pred_stage)
     else:
         if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
             pretrained = MyRNN(pretrain_stage_config)
@@ -44,57 +52,17 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
         if pretrain_stage_ckpt is not None:
             pretrained.load_state_dict(pretrain_stage_ckpt['model'])
         ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
-        model = nn.Sequential(ptrmdl, resnet)
+        # combine the models
+        model = nn.Sequential(ptrmdl, resnet, pred_stage)
     return model
 
 
-# %% Final prediction stage
-
-class predication_stage(nn.Module):
-    def __init__(self, n_diagnoses=8, hidden_size=20, num_layers=1):
-        super(predication_stage, self).__init__()
-        self.n_diagnoses = n_diagnoses
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-
-        self.rnn = nn.GRU(input_size=n_diagnoses, hidden_size=hidden_size, num_layers=num_layers)
-        self.linear = nn.Linear(hidden_size, n_diagnoses)
-
-    def forward(self, inp, hidd):
-        # input is of size (seq_len, batch_size, n_diagnoses)
-        # hidden layer is of size (num_layer, batch_size, hidden_size)
-        out1, hidden = self.rnn(inp, hidd)
-        output = self.linear(out1)
-
-        # output is of size (seq_len, batch_size, hidden_size) but only last sequence point is outputted
-        # hidden is of size (num_layer, batch_size, hidden_size)
-        return output[-1], hidden
-
-    def init_hidden_layer(self, batch_size):
-        hidden_layer = torch.zeros(self.num_layers, batch_size, self.hidden_size)
-        input_state = torch.zeros(1, batch_size, self.n_diagnoses, requires_grad=False)
-
-        return input_state, hidden_layer
-
-    """def get_rnn_input(self, model_out, hidden_layer, sub_ids):
-        # set the hidden layer for all batches to zero where sub_ids are zero
-
-        # for first iteration model_output need to have seq_len=1
-        # then extend it depending on the longest running not changed sub_id
-        # if a sub_id was changed to zero, then set the rnn_input to zero
-        stopvar = 1
-        rnn_input = model_out
-        return rnn_input, hidden_layer"""
-
-
 # %% Train model
-def train(ep, model, pred_stage, optimizer, train_loader, out_layer, device):
+def train(ep, model, optimizer, train_loader, out_layer, device):
     model.train()
     total_loss = 0
     n_entries = 0
-    batch_size = train_loader[0][0].shape[0]
-    #### DOESNT WORK IN LONG RUN SINCE BATCH_SIZE DOES NOT STAY THE SAME
-    rnn_input_state, hidden_layer = pred_stage.init_hidden_layer(batch_size)
+    # training progress bar
     train_desc = "Epoch {:2d}: train - Loss: {:.6f}"
     train_bar = tqdm(initial=0, leave=True, total=len(train_loader),
                      desc=train_desc.format(ep, 0), position=0)
@@ -102,57 +70,17 @@ def train(ep, model, pred_stage, optimizer, train_loader, out_layer, device):
         traces, target, ids, sub_ids = batch
         traces = traces.to(device=device)
         target = target.to(device=device)
-        # current batch_size
-        batch_size = traces.shape[0]
+        # update sub_ids for final prediction stage model
+        if model[-1]._get_name() == 'RNNPredictionStage':
+            model[-1].update_sub_ids(sub_ids)
         # Reinitialize grad
         model.zero_grad()
         # Forward pass
-        model_out = model(traces)
-        ###### prediction stage
-        # rnn_input, hidden_layer = pred_stage.get_rnn_input(model_out, hidden_layer, sub_ids)
-        inp_dim = rnn_input_state.shape[-1]
-        num_layers = hidden_layer.shape[0]
-        hidden_size = hidden_layer.shape[2]
-
-        # Get a state tensor which uses a sequence length which is the max number of running exams (in sub_ids)
-        max_seq_len = max(sub_ids) + 1
-        rnn_input_state = torch.cat([rnn_input_state[:, :batch_size].detach(), model_out.unsqueeze(0).detach()], dim=0)[
-                          -max_seq_len:]
-        # create mask
-        # batch_size = len(sub_ids)  #######
-        mask = torch.zeros(max_seq_len, batch_size)
-        # create mask as: set rnn_input_state[-sub_ids[i]:,i,:]=0 if sub_ids[i]=0
-        sub_ids_tens = torch.tensor(sub_ids)
-        for t in range(max_seq_len):
-            mask[t, :] = (-(sub_ids_tens + 1) <= -max_seq_len + t)
-        mask = mask.unsqueeze(2).repeat(1, 1, inp_dim)
-        # apply mask: set masked values to zero
-        rnn_input_state = rnn_input_state.masked_fill(mask == 1, float(0))
-        """# detach values which are masked
-        mask_ind = (mask == 0).nonzero()
-        ind_0 = mask_ind[:, 0]
-        ind_1 = mask_ind[:, 1]
-        ind_2 = mask_ind[:, 2]
-        rnn_input_state[ind_0, ind_1, ind_2] = rnn_input_state[ind_0, ind_1, ind_2].detach()"""
-
-        # create mask from sub_ids of dimension as hidden_layer
-        mask = torch.tensor(sub_ids).view(1, -1, 1)
-        mask = mask.repeat(num_layers, 1, hidden_size)
-        # apply sub_ids as mask: set hidden_layer[:,i,:]=0 if sub_ids[i]==0
-        hidden_layer = hidden_layer[:, :batch_size].masked_fill(mask == 0, float(0))
-        # detach values which are masked
-        mask_ind = (mask == 0).nonzero()
-        ind_0 = mask_ind[:, 0]
-        ind_1 = mask_ind[:, 1]
-        ind_2 = mask_ind[:, 2]
-        hidden_layer[ind_0, ind_1, ind_2] = hidden_layer[ind_0, ind_1, ind_2].detach()
-        # run prediction stage rnn
-        output, hidden_layer = pred_stage(rnn_input_state, hidden_layer)
-
+        output = model(traces)
         # softmax and sigmoid layer implicitly contained in the loss
         loss = out_layer.loss(output, target)
         # Backward pass
-        loss.backward(retain_graph=True)  # retain_graph should be removed!!
+        loss.backward()  # retain_graph should be removed!!
         # Optimize
         optimizer.step()
         # Update
@@ -163,6 +91,10 @@ def train(ep, model, pred_stage, optimizer, train_loader, out_layer, device):
         train_bar.desc = train_desc.format(ep, total_loss / n_entries)
         train_bar.update(1)
     train_bar.close()
+    # reset prediction stage variables
+    if model[-1]._get_name() == 'RNNPredictionStage':
+        model[-1].reset()
+
     return total_loss / n_entries
 
 
@@ -182,6 +114,9 @@ def evaluate(ep, model, valid_loader, out_layer, device):
             traces, target, ids, sub_ids = batch
             traces = traces.to(device=device)
             target = target.to(device=device)
+            # update sub_ids for final prediction stage model
+            if model[-1]._get_name() == 'RNNPredictionStage':
+                model[-1].update_sub_ids(sub_ids)
             # Forward pass
             logits = model(traces)
             output = out_layer.get_output(logits)
@@ -199,12 +134,16 @@ def evaluate(ep, model, valid_loader, out_layer, device):
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
             eval_bar.update(1)
     eval_bar.close()
+    # reset prediction stage variables
+    if model[-1]._get_name() == 'RNNPredictionStage':
+        model[-1].reset()
     return total_loss / n_entries, np.concatenate(all_outputs), np.concatenate(all_targets), all_ids
 
 
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
+    # Learning parameters
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--epochs', type=int, default=200,
@@ -225,11 +164,17 @@ if __name__ == '__main__':
                                help='milestones for lr scheduler (default: [100, 200])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
+    # Pretrain Model parameters
     config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
                                help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
+    config_parser.add_argument('--finetuning', action='store_true',
+                               help='when there is a pre-trained model, by default it '
+                                    'freezes the weights of the pre-trained model, but with this option'
+                                    'these weight will be fine-tunned during training.')
+    # Model parameters
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
     config_parser.add_argument('--net_seq_length', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
@@ -241,10 +186,13 @@ if __name__ == '__main__':
     config_parser.add_argument('--n_total', type=int, default=-1,
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
-    config_parser.add_argument('--finetuning', action='store_true',
-                               help='when there is a pre-trained model, by default it '
-                                    'freezes the weights of the pre-trained model, but with this option'
-                                    'these weight will be fine-tunned during training.')
+    # Final Predictor parameters
+    config_parser.add_argument('--pred_stage_type', type=str, default='gru',
+                               help='type of prediction stage model: LSTM, GRU, RNN, max, mean.')
+    config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
+                               help='number of rnn layers in prediction stage (default: 1).')
+    config_parser.add_argument('--pred_stage_hidd', type=int, default=20,
+                               help='size of hidden layer in prediction stage rnn (default: 20).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -252,7 +200,7 @@ if __name__ == '__main__':
                             help='input folder.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/output_prestage_transformer_old',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/output_prestage_transformer_old',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -351,7 +299,6 @@ if __name__ == '__main__':
     tqdm.write("Define model...")
     model = get_model(vars(args), config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
-    pred_stage = predication_stage(n_diagnoses=8)
     tqdm.write("Done!")
 
     tqdm.write("Define optimizer...")
@@ -368,13 +315,14 @@ if __name__ == '__main__':
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
     best_geom_mean = -np.Inf
+    # run over all epochs
     for ep in range(args.epochs):
         # Train and evaluate
-        train_loss = train(ep, model, pred_stage, optimizer, train_loader, out_layer, device)
+        train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
         y_true = multiclass_to_binaryclass(all_targets)
         # Collapse entries with the same id:
-        unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))  # TODO: test alternatives
+        unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(vars(args)))
         _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
         # Get labels
         y_pred = y_score > threshold
