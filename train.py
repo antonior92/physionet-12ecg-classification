@@ -72,7 +72,7 @@ class predication_stage(nn.Module):
 
     def init_hidden_layer(self, batch_size):
         hidden_layer = torch.zeros(self.num_layers, batch_size, self.hidden_size)
-        input_state = torch.zeros(1, batch_size, self.n_diagnoses)
+        input_state = torch.zeros(1, batch_size, self.n_diagnoses, requires_grad=False)
 
         return input_state, hidden_layer
 
@@ -108,27 +108,38 @@ def train(ep, model, pred_stage, optimizer, train_loader, out_layer, device):
         model.zero_grad()
         # Forward pass
         model_out = model(traces)
-        # prediction stage
+        ###### prediction stage
         # rnn_input, hidden_layer = pred_stage.get_rnn_input(model_out, hidden_layer, sub_ids)
+        inp_dim = rnn_input_state.shape[-1]
+        num_layers = hidden_layer.shape[0]
+        hidden_size = hidden_layer.shape[2]
 
         # Get a state tensor which uses a sequence length which is the max number of running exams (in sub_ids)
         max_seq_len = max(sub_ids) + 1
-        rnn_input_state = torch.cat([rnn_input_state[:, :batch_size].detach(), model_out.detach().unsqueeze(0)], dim=0)[
+        rnn_input_state = torch.cat([rnn_input_state[:, :batch_size].detach(), model_out.unsqueeze(0).detach()], dim=0)[
                           -max_seq_len:]
         # create mask
-        mask = torch.tensor(sub_ids)
-        # apply mask as: set rnn_input_state[-sub_ids[i]:,i,:]=0 if sub_ids[i]=0
-            # see goodnotes for how the mask should look like and some ideas on how to implement it
-        # get sub_ids of same shape as hidden_layer
-        # hidden_layer.shape = (num_layers, batch_size, hidden_size)
-        num_layers = hidden_layer.shape[0]
-        hidden_size = hidden_layer.shape[2]
+        # batch_size = len(sub_ids)  #######
+        mask = torch.zeros(max_seq_len, batch_size)
+        # create mask as: set rnn_input_state[-sub_ids[i]:,i,:]=0 if sub_ids[i]=0
+        sub_ids_tens = torch.tensor(sub_ids)
+        for t in range(max_seq_len):
+            mask[t, :] = (-(sub_ids_tens + 1) <= -max_seq_len + t)
+        mask = mask.unsqueeze(2).repeat(1, 1, inp_dim)
+        # apply mask: set masked values to zero
+        rnn_input_state = rnn_input_state.masked_fill(mask == 1, float(0))
+        """# detach values which are masked
+        mask_ind = (mask == 0).nonzero()
+        ind_0 = mask_ind[:, 0]
+        ind_1 = mask_ind[:, 1]
+        ind_2 = mask_ind[:, 2]
+        rnn_input_state[ind_0, ind_1, ind_2] = rnn_input_state[ind_0, ind_1, ind_2].detach()"""
 
         # create mask from sub_ids of dimension as hidden_layer
         mask = torch.tensor(sub_ids).view(1, -1, 1)
         mask = mask.repeat(num_layers, 1, hidden_size)
         # apply sub_ids as mask: set hidden_layer[:,i,:]=0 if sub_ids[i]==0
-        hidden_layer = hidden_layer.masked_fill(mask == 0, float(0))
+        hidden_layer = hidden_layer[:, :batch_size].masked_fill(mask == 0, float(0))
         # detach values which are masked
         mask_ind = (mask == 0).nonzero()
         ind_0 = mask_ind[:, 0]
