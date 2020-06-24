@@ -8,7 +8,7 @@ import subprocess as subp
 
 #define paths 
 
-main_path = 'C:\\Users\\danie\\OneDrive\\Área de Trabalho\\IC\\Projetos\\Physionet Challenge\\physionet-12ecg-classification'
+main_path = os.getcwd()
 #dump_file_path = 'C:\\Users\\danie\\OneDrive\\Área de Trabalho\\optuna test\\12ECG_optuna.pkl'
 os.chdir(main_path)
 
