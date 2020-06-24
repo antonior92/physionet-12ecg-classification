@@ -26,13 +26,13 @@ def execute(trial):
     #os.chdir(main_path)
     
     #pretrain.py setup
-    pre_set_up = ('python pretrain.py --n_total 12 --epochs 10 --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    pre_set_up = ('python pretrain.py --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
         '--lr_factor {}'.format(trial.suggest_loguniform('pre_lr_factor',0.0001,1)), 
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))
     #train.py setup
-    train_set_up =('python train.py --n_total 12 --epochs 10 --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    train_set_up =('python train.py --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
         '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
         '--lr_factor {}'.format(trial.suggest_loguniform('lr_factor',0.0001,1)),
@@ -43,7 +43,7 @@ def execute(trial):
     #pretrain comand
     pre_cmd = " ".join(pre_set_up)
     #subp.check_call(pre_cmd, shell=True)s
-    os.system(pre_cmd)
+    #os.system(pre_cmd) primeiro teste na gpu do dce
     #train command
     train_cmd = " ".join(train_set_up)
     #subp.check_call(train_cmd, shell=True)
@@ -81,10 +81,10 @@ def del_unworthy_trials(dir_name, best_iter):
 search_space = {
     'pre_lr':[0.01],
     'pre_lr_factor':[0.1],
-    'pre_dropout_rate':[0.1, 0.2],
-    'pre_num_heads':[2,5],
+    'pre_dropout_rate':[0.2],
+    'pre_num_heads':[2],
     'pre_emb_size':[50],
-    'kernel_size': [17],
+    'kernel_size': [9,15,17],
     'dropout_rate': [0.3],
     'lr_factor': [0.1],
     'lr': [0.01],
