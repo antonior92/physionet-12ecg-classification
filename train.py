@@ -67,6 +67,8 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
     train_bar = tqdm(initial=0, leave=True, total=len(train_loader),
                      desc=train_desc.format(ep, 0), position=0)
     for i, batch in enumerate(train_loader):
+        if i == 10:
+            break
         traces, target, ids, sub_ids = batch
         traces = traces.to(device=device)
         target = target.to(device=device)
@@ -80,7 +82,7 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
         # softmax and sigmoid layer implicitly contained in the loss
         loss = out_layer.loss(output, target)
         # Backward pass
-        loss.backward()  # retain_graph should be removed!!
+        loss.backward()
         # Optimize
         optimizer.step()
         # Update
@@ -188,11 +190,11 @@ if __name__ == '__main__':
                                     'all the samples available. Useful for quick tests.')
     # Final Predictor parameters
     config_parser.add_argument('--pred_stage_type', type=str, default='gru',
-                               help='type of prediction stage model: LSTM, GRU, RNN, max, mean.')
-    config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
-                               help='number of rnn layers in prediction stage (default: 1).')
-    config_parser.add_argument('--pred_stage_hidd', type=int, default=20,
-                               help='size of hidden layer in prediction stage rnn (default: 20).')
+                               help='type of prediction stage model: LSTM, GRU (default), RNN, mean, max.')
+    config_parser.add_argument('--pred_stage_n_layer', type=int, default=2,
+                               help='number of rnn layers in prediction stage (default: 2).')
+    config_parser.add_argument('--pred_stage_hidd', type=int, default=200,
+                               help='size of hidden layer in prediction stage rnn (default: 30).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
