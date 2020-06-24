@@ -173,9 +173,14 @@ class ECGDataset(abc.Sequence):
 
 if __name__ == '__main__':
     import argparse
+    import pandas as pd
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
 
     parser = argparse.ArgumentParser(description='Generate short summary of the dataset.')
     parser.add_argument('path', help='path to the dataset root folder')
+    parser.add_argument('--snomed_ct', default='./dx/snomed-ct.csv')
     args = parser.parse_args()
 
     dset = ECGDataset(args.path)
@@ -183,10 +188,31 @@ if __name__ == '__main__':
     classes = dset.get_classes()
     occurences = dset.get_ocurrences(classes)
 
+    # convert class names
+    df_snomed_ct = pd.read_csv(args.snomed_ct)
+    df_snomed_ct = df_snomed_ct.set_index('SNOMED CT Code')
+    abbrev = [df_snomed_ct.loc[int(c)]['Abbreviation'] for c in classes]
 
     print('dataset length = {}'.format(n))
     print('{} classes'.format(len(classes)))
-    print(','.join(['{}'.format(c) for c in classes]))
+    print(','.join(['{}'.format(c) for c in abbrev]))
     print(','.join('{:d}'.format(c) for c in occurences))
     print(','.join('{:2.2f}'.format(c/n * 100) for c in occurences))
+
+    class_to_idx = dict(zip(classes, range(len(classes))))
+    counts = np.zeros((len(classes), len(classes)), dtype=int)
+    for idx in range(len(dset)):
+        header = dset._getsample(idx, only_header=True)
+        for l in header['labels']:
+            for s in header['labels']:
+                counts[class_to_idx[l], class_to_idx[s]] += 1
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    df = pd.DataFrame(counts, columns=abbrev, index=abbrev)
+    sns.heatmap(df+0.5,  linewidths=0, fmt='d', ax=ax,
+                norm=LogNorm(vmin=0, vmax=counts.max()))
+    ax.set_xlim([-0.5, len(classes)+0.5])
+    ax.set_ylim([-0.5, len(classes)+0.5])
+    plt.show()
+
 
