@@ -1,5 +1,6 @@
 import json
 import argparse
+import torch
 import datetime
 import random
 import pandas as pd
@@ -8,13 +9,14 @@ from warnings import warn
 from data import *
 from tqdm import tqdm
 
+from data.ecg_dataloader import get_batchloader
 from models.resnet import ResNet1d
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from metrics import get_metrics
 from output_layer import OutputLayer, collapse, DxClasses
 
 
-def get_model(config, dx, pretrain_stage_config=None, pretrain_stage_ckpt=None):
+def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
@@ -31,7 +33,7 @@ def get_model(config, dx, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     # Get resnet
     resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
-                      n_classes=len(dx), kernel_size=config['kernel_size'],
+                      n_classes=n_classes, kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
     # Get final prediction stage
     if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
@@ -200,7 +202,7 @@ if __name__ == '__main__':
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
                             help='input folder.')
-    sys_parser.add_argument('--classes', type=str, default='./classes.txt',
+    sys_parser.add_argument('--classes', type=str, const='./classes.txt', default='', nargs='?',
                             help='File specifying classes: names and mutually exclusiveness.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
@@ -253,15 +255,11 @@ if __name__ == '__main__':
         pretrain_ids = []
         tqdm.write("Did not found pretrained model!")
 
-    # Define and save classes
-    tqdm.write("Define classes...")
-    dx = DxClasses.read_csv(os.path.join(settings.classes))
-    dx.to_csv(os.path.join(folder, 'classes.txt'))
-    tqdm.write("Define done...")
-
     tqdm.write("Define dataset...")
-    dset = ECGDataset(settings.input_folder, dx, freq=args.sample_freq)
-    # ids
+    dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    tqdm.write("Done!")
+
+    tqdm.write("Define train and validation splits...")
     all_ids = dset.get_ids()
     set_all_ids = set(all_ids)
     # Get pretrained ids
@@ -285,9 +283,23 @@ if __name__ == '__main__':
         f.write(','.join(train_ids))
     with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
+    tqdm.write("Done!")
+
+    # Define and save classes
+    tqdm.write("Define output layer...")
+    if settings.classes:
+        dx = DxClasses.read_csv(os.path.join(settings.classes))
+    else:
+        classes = dset.get_classes()
+        dx = DxClasses(classes, range(len(classes)))
+    dx.to_csv(os.path.join(folder, 'classes.txt'))
+    out_layer = OutputLayer(args.batch_size, dx, device)
+    tqdm.write("Done!")
+
+    tqdm.write("Get dataloaders...")
     # Define dataset
-    train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
-    valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
+    train_loader = get_batchloader(dset, train_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    valid_loader = get_batchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
     # Get number of batches
     n_train_batches = len(train_loader)
     n_valid_batches = len(valid_loader)
@@ -303,12 +315,11 @@ if __name__ == '__main__':
     targets_bin = dx.multiclass_to_binaryclass(targets)
     threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = AF:{:.2f},I-AVB:{:.2f},RBBB:{:.2f},LBBB:{:.2f},PAC:{:.2f},PVC:{:.2f},STD:{:.2f},STE:{:.2f}"
-               .format(*threshold))
+    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.2f}".format(c, threshold[i]) for i, c in enumerate(dx.classes)]))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    model = get_model(vars(args), dx, config_dict_pretrain_stage, ckpt_pretrain_stage)
+    model = get_model(vars(args), len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
     tqdm.write("Done!")
 
@@ -318,10 +329,6 @@ if __name__ == '__main__':
 
     tqdm.write("Define scheduler...")
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=args.lr_factor)
-    tqdm.write("Done!")
-
-    tqdm.write("Define loss...")
-    out_layer = OutputLayer(args.batch_size, dx, device)
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])

@@ -4,14 +4,15 @@ import json
 import torch
 from train import get_model
 from output_layer import OutputLayer, DxClasses
-from data import (get_sample, SplitLongSignals)
+from data import (get_sample)
+from data.ecg_dataloader import SplitLongSignals
 
 
 def run_12ECG_classifier(data, header_data, classes, mdl):
     # Get model specifications
     model, dx, out_layer, threshold, config_dict, device = mdl
     # Get sample
-    sample = get_sample(header_data, dx, data, config_dict['sample_freq'])
+    sample = get_sample(header_data, data, config_dict['sample_freq'])
     # Get trace
     model.eval()
     # Run model
@@ -31,12 +32,8 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         y_pred = dx.add_null_column(y_pred, prob=False)
 
         # Reorder according to vector classes
-        current_order = dx.all_classes
-        dict_current_order = dict(zip(current_order, range(len(current_order))))
-        new_idx = [dict_current_order[c] for c in classes]
-        y_score = y_score[new_idx]
-        y_pred = y_pred[new_idx]
-
+        y_score = dx.reorganize(y_score, classes)
+        y_pred = dx.reorganize(y_pred, classes)
     return y_pred, y_score
 
 
@@ -64,7 +61,7 @@ def load_12ECG_model():
         config_dict_pretrain_stage = None
 
     # Define model
-    model = get_model(config_dict, dx, config_dict_pretrain_stage)
+    model = get_model(config_dict, len(dx), config_dict_pretrain_stage)
     model.load_state_dict(ckpt["model"])
 
     # Device

@@ -86,9 +86,9 @@ class OutputLayer(object):
 
 class DxClasses(object):
 
-    def __init__(self, classes, null_class='Normal', idx=None):
+    def __init__(self, classes, idx=None, null_class='Normal'):
         self.classes = classes
-        self.idx = idx if idx is not None else range(len(classes))
+        self.idx = idx if idx is not None else list(range(len(classes)))
         self.null_class = null_class
 
     @property
@@ -178,7 +178,7 @@ class DxClasses(object):
             classes, idx_classes = f.read().split('\n')
             classes = classes.split(',')
             idx_classes = [int(i) for i in idx_classes.split(',')]
-        return cls(classes[1:], classes[0], idx_classes[1:])
+        return cls(classes[1:], idx_classes[1:], classes[0])
 
     def to_csv(self, path):
         with open(path, 'w') as f:
@@ -187,4 +187,13 @@ class DxClasses(object):
             f.write('\n')
             f.write('-1,')
             f.write(','.join([str(i) for i in self.idx]))
+
+    def reorganize(self, y, classes):
+        dict_current_order = dict(zip(self.all_classes, range(len(self.all_classes))))
+        new_idx = [dict_current_order[c] for c in classes if c in self.all_classes]
+        valid_idx = np.isin(classes, self.all_classes)
+        new_y = np.zeros(len(classes), dtype=y.dtype)
+        new_y[valid_idx] = y[new_idx]
+        return new_y
+
 
