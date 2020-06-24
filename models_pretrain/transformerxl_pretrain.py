@@ -4,10 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models_pretrain.masks_transformer import *
 
-"""class PretrainedTransformerXLBlock(nn.Module):
+class PretrainedTransformerXLBlock(nn.Module):
     """  # Get reusable part from MyTransformerXL and return new model.
-# Include Linear block with the given output_size.
-"""
+         # Include Linear block with the given output_size.
+    """
     def __init__(self, pretrained, output_size, freeze=False):
         super(PretrainedTransformerXLBlock, self).__init__()
         self.N_LEADS = 12
@@ -41,7 +41,7 @@ from models_pretrain.masks_transformer import *
         out2 = self.decoder(out1)
         # permute to have the same dimensions as in the input
         output = out2.permute(1, 2, 0)
-        return output"""
+        return output
 
 
 class PositionalEncoding(nn.Module):
