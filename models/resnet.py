@@ -128,7 +128,6 @@ class ResNet1d(nn.Module):
         n_filters_last, n_samples_last = blocks_dim[-1]
         last_layer_dim = n_filters_last * n_samples_last
         self.lin = nn.Linear(last_layer_dim, n_classes)
-        self.n_blk = len(blocks_dim)
 
     def forward(self, x):
         """Implement ResNet1d forward propagation"""
@@ -144,6 +143,4 @@ class ResNet1d(nn.Module):
         # Flatten array
         x = x.view(x.size(0), -1)
 
-        # Fully conected layer
-        x = self.lin(x)
         return x

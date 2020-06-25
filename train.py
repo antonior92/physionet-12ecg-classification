@@ -1,7 +1,5 @@
 import os
 import json
-import torch
-import torch.nn as nn
 import argparse
 import datetime
 import random
@@ -11,7 +9,7 @@ from warnings import warn
 from data import *
 from tqdm import tqdm
 from models.resnet import ResNet1d
-from models.prediction_model import RNNPredictionStage, DummyPredictionStage
+from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from metrics import get_metrics
 from output_layer import OutputLayer, collapse, get_collapse_fun
 
@@ -39,7 +37,9 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
         pred_stage = RNNPredictionStage(config, len(CLASSES))
     else:
-        pred_stage = DummyPredictionStage()
+        n_filters_last = config['net_filter_size'][-1]
+        n_samples_last = config['net_seq_length'][-1]
+        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last*n_samples_last, n_classes=len(CLASSES))
     # get pretrain model if available and combine all models
     if pretrain_stage_config is None:
         # combine the models
@@ -67,8 +67,6 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
     train_bar = tqdm(initial=0, leave=True, total=len(train_loader),
                      desc=train_desc.format(ep, 0), position=0)
     for i, batch in enumerate(train_loader):
-        if i == 10:
-            break
         traces, target, ids, sub_ids = batch
         traces = traces.to(device=device)
         target = target.to(device=device)
@@ -191,9 +189,9 @@ if __name__ == '__main__':
     # Final Predictor parameters
     config_parser.add_argument('--pred_stage_type', type=str, default='gru',
                                help='type of prediction stage model: LSTM, GRU (default), RNN, mean, max.')
-    config_parser.add_argument('--pred_stage_n_layer', type=int, default=2,
+    config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
                                help='number of rnn layers in prediction stage (default: 2).')
-    config_parser.add_argument('--pred_stage_hidd', type=int, default=200,
+    config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
