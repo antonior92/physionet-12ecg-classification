@@ -1,0 +1,19 @@
+{
+	"seed": 2,
+	"epochs": 200,
+	"sample_freq": 400,
+	"seq_length": 4096,
+	"batch_size": 32,
+	"valid_split": 0.3,
+	"lr": 0.001,
+	"milestones": [
+		75,
+		125,
+		175
+	],
+	"lr_factor": 0.1,
+	"pretrain_model": "Transformer",
+	"pretrain_output_size": 64,
+	"hidden_size": 400,
+	"finetuning": true
+}

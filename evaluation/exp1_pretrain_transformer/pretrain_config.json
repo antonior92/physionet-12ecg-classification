@@ -1,0 +1,40 @@
+{
+	"pretrain_model": "Transformer",
+	"seed": 2,
+	"epochs": 125,
+	"sample_freq": 400,
+	"seq_length": 4096,
+	"batch_size": 32,
+	"valid_split": 0.3,
+	"lr": 0.001,
+	"milestones": [
+		40,
+		75,
+		100
+	],
+	"lr_factor": 0.1,
+	"dropout": 0.2,
+	"clip_value": 1.0,
+	"n_total": -1,
+	"hidden_size_rnn": 800,
+	"num_layers": 1,
+	"k_steps_ahead": [
+		10,
+		20,
+		25,
+		50,
+		75,
+		90,
+		100
+	],
+	"num_heads": 2,
+	"num_trans_layers": 2,
+	"dim_model": 10,
+	"dim_inner": 10,
+	"num_masked_samples": 8,
+	"perc_masked_samp": 0.15,
+	"steps_concat": 4,
+	"mem_len": 100,
+	"dropout_attn": 0.2,
+	"init_std": 0.02
+}
