@@ -140,7 +140,4 @@ class ResNet1d(nn.Module):
         for blk in self.res_blocks:
             x, y = blk(x, y)
 
-        # Flatten array
-        x = x.view(x.size(0), -1)
-
         return x
