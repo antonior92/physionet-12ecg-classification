@@ -9,7 +9,7 @@ from warnings import warn
 from data import *
 from tqdm import tqdm
 
-from data.ecg_dataloader import get_batchloader
+from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from metrics import get_metrics
@@ -298,8 +298,8 @@ if __name__ == '__main__':
 
     tqdm.write("Get dataloaders...")
     # Define dataset
-    train_loader = get_batchloader(dset, train_ids, dx, batch_size=args.batch_size, length=args.seq_length)
-    valid_loader = get_batchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    valid_loader = ECGBatchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
     # Get number of batches
     n_train_batches = len(train_loader)
     n_valid_batches = len(valid_loader)
@@ -311,7 +311,9 @@ if __name__ == '__main__':
 
     tqdm.write("Define threshold ...")
     # Get all targets
-    targets = np.stack([dx.get_target_from_labels(s['labels']) for s in dset.use_only_header(True)[train_ids]])
+    dset.use_only_header(True)
+    targets = np.stack([dx.get_target_from_labels(s['labels']) for s in dset[train_ids]])
+    dset.use_only_header(False)
     targets_bin = dx.multiclass_to_binaryclass(targets)
     threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")

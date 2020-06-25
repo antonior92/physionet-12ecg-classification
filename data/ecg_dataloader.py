@@ -71,8 +71,9 @@ class LoI2IoL(abc.Iterator):
         return new_list
 
 
-def get_batches(batch_size, ids, counts):
+def get_batches(batch_size, ids, counts, drop_last=False):
     # TODO: deal with case the count is larger than `min_n_batches`.
+    # TODO: Check if drop last work for the special cases
     # Get minumum number of batches
     min_n_batches = sum(counts) // batch_size
     # Compute dicts with constante voulume
@@ -85,33 +86,42 @@ def get_batches(batch_size, ids, counts):
     # Get ids for each of the batches
     batches = all_ids[:batch_size]
     # Distribute remainders
-    for i, id in enumerate(itertools.chain(*all_ids[batch_size:])):
-        batches[i % batch_size].append(id)
+    if not drop_last:
+        for i, id in enumerate(itertools.chain(*all_ids[batch_size:])):
+            batches[i % batch_size].append(id)
     return batches
 
 
-def get_batchloader(dset, ids, dx=None, batch_size=32, length=4096, min_length=None):
-    if min_length is None:
-        min_length = length // 2
-    transformation = lambda s: SplitLongSignals(s, length,  min_length)
-    dset.use_only_header(True)
-    counts = [len(transformation(s)) for s in dset[ids]]
-    dset.use_only_header(False)
-    batches = get_batches(batch_size, ids, counts)
-    modified_dset = [itertools.chain.from_iterable(map(transformation, dset[iter(b)])) for b in batches]
-    x = LoI2IoL(modified_dset)
+class ECGBatchloader(abc.Iterable):
+    def __init__(self, dset, ids, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False):
+        self.dset = dset
+        if min_length is None:
+            min_length = length // 2
+        self.transformation = lambda s: SplitLongSignals(s, length, min_length)
+        dset.use_only_header(True)
+        counts = [len(self.transformation(s)) for s in dset[ids]]
+        dset.use_only_header(False)
+        self.batches = get_batches(batch_size, ids, counts, drop_last)
 
-    def collapsing_fn(batch):
-        traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32) for s in batch], dim=0)
-        if dx is not None:
-            target = torch.stack(
-              [torch.tensor(dx.get_target_from_labels(s['labels']), dtype=torch.long) for s in batch], dim=0)
-        ids = [s['id'] for s in batch]
-        sub_ids = [s['sub_id'] for s in batch]
-        if dx is not None:
-            return (traces, target, ids, sub_ids)
-        else:
-            return (traces, ids, sub_ids)
+        def collapsing_fn(batch):
+            traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32) for s in batch], dim=0)
+            if dx is not None:
+                target = torch.stack(
+                    [torch.tensor(dx.get_target_from_labels(s['labels']), dtype=torch.long) for s in batch], dim=0)
+            ids = [s['id'] for s in batch]
+            sub_ids = [s['sub_id'] for s in batch]
+            if dx is not None:
+                return (traces, target, ids, sub_ids)
+            else:
+                return (traces, ids, sub_ids)
 
-    batch_loader = map(collapsing_fn, x)
-    return list(batch_loader)
+        self.collapsing_fn = collapsing_fn
+
+    def __iter__(self):
+        modified_dset = [itertools.chain.from_iterable(map(self.transformation, self.dset[iter(b)])) for b in self.batches]
+        x = LoI2IoL(modified_dset)
+        batch_loader = map(self.collapsing_fn, x)
+        return batch_loader
+
+    def __len__(self):
+        return max([len(b) for b in self.batches])
