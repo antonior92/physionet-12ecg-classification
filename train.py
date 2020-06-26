@@ -12,8 +12,18 @@ from tqdm import tqdm
 from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
-from metrics import get_metrics
 from output_layer import OutputLayer, collapse, DxClasses
+from evaluate_12ECG_score import compute_beta_score
+
+
+def get_metrics(y_true, y_pred):
+    """Return dictionary with relevant metrics"""
+    accuracy, f_measure, f_beta, g_beta = compute_beta_score(y_true, y_pred,  num_classes=y_pred.shape[1],
+                                                             beta=2, check_errors=True)
+
+    geometric_mean = np.sqrt(f_beta*g_beta)
+
+    return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta, 'geom_mean': geometric_mean}
 
 
 def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
@@ -202,7 +212,7 @@ if __name__ == '__main__':
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
                             help='input folder.')
-    sys_parser.add_argument('--classes', type=str, const='./classes.txt', default='', nargs='?',
+    sys_parser.add_argument('--classes', type=str, const='./classes.csv', default='', nargs='?',
                             help='File specifying classes: names and mutually exclusiveness.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
@@ -310,14 +320,9 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
-    # Get all targets
-    dset.use_only_header(True)
-    targets = np.stack([dx.get_target_from_labels(s['labels']) for s in dset[train_ids]])
-    dset.use_only_header(False)
-    targets_bin = dx.multiclass_to_binaryclass(targets)
-    threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
+    threshold = dx.compute_threshold(dset, train_ids)
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.2f}".format(c, threshold[i]) for i, c in enumerate(dx.classes)]))
+    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.2f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
@@ -340,17 +345,20 @@ if __name__ == '__main__':
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
-        y_true = dx.multiclass_to_binaryclass(all_targets)
         # Collapse entries with the same id:
-        unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(vars(args)))
-        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-        # Get labels
+        unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
+        # Get zero one prediction
         y_pred = y_score > threshold
+        y_pred = dx.reorganize(y_pred)
+        # Get metrics
+        y_true = dx.multiclass_to_binaryclass(all_targets)
+        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
+        y_true = dx.reorganize(y_true)
+        metrics = get_metrics(y_true, y_pred)
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        metrics = get_metrics(dx.add_null_column(y_true), dx.add_null_column(y_pred))
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \

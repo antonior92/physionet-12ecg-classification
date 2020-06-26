@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import pandas as pd
 
 
 def get_collapse_fun(args):
@@ -35,9 +36,10 @@ def collapse(x, ids, fn, unique_ids=None):
 
 class OutputLayer(object):
     def __init__(self, bs, dx, device, dtype=torch.float32):
-        # Save zero tensor to be used as 'normal' case in the softmax
-        self.normal = torch.zeros((bs, 1), device=device, dtype=dtype)
         self.softmax_mask = dx.mutually_exclusive
+        if self.softmax_mask:  # if not empty
+            # Save zero tensor to be used as 'null_class' case in the softmax
+            self.null_class = torch.zeros((bs, 1), device=device, dtype=dtype)
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='sum')
         self.ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
         self.sigmoid = torch.nn.Sigmoid()
@@ -48,7 +50,7 @@ class OutputLayer(object):
         softmax_outputs = []
         n_softmax_outputs = 0
         for mask in self.softmax_mask:
-            softmax_outputs.append(torch.cat((self.normal[:bs], output[:, mask]), dim=1))
+            softmax_outputs.append(torch.cat((self.null_class[:bs], output[:, mask]), dim=1))
             n_softmax_outputs += len(mask)
         sigmoid_outputs = output[:, n_softmax_outputs:]
         return softmax_outputs, sigmoid_outputs
@@ -86,52 +88,99 @@ class OutputLayer(object):
 
 class DxClasses(object):
 
-    def __init__(self, classes, idx=None, null_class='Normal'):
-        self.classes = classes
-        self.idx = idx if idx is not None else list(range(len(classes)))
-        self.null_class = null_class
+    def __init__(self, class_code, group=None):
+        class_code = [str(c) for c in list(class_code)]
+        # Replace with defaults
+        if group is None:
+            group = range(len(class_code))
+        else:
+            group = list(group)
+        # Group classes in a dictionary by 'group'
+        groups = np.unique(group)
+        class_code_dict = dict(zip(groups, [[] for _ in range(len(groups))]))
+        for c, g in zip(class_code, group):
+            class_code_dict[g].append(c)
+        # Remove null class if present
+        if '*' in class_code_dict.keys():
+            null_class_code = class_code_dict['*']
+            del class_code_dict['*']
+        else:
+            null_class_code = None
+        # Get idx and subidx
+        lgroup = []
+        idx = []
+        code = []
+        subidx = []
+        i = 0
+        for g, v in sorted(class_code_dict.items(), key=lambda x: len(x[1]), reverse=True):
+            j = 0
+            for vv in v:
+                # set idx and group
+                lgroup.append(g)
+                idx.append(i)
+                # set subidx and code
+                code.append(vv)
+                subidx.append(j)
+                j += 1
+            i += 1
+        self.original_code = class_code
+        self.original_group = group
+        self.class_code_dict = class_code_dict
+        self.group = lgroup
+        self.idx = idx
+        self.code = code
+        self.subidx = subidx
+        self.null_class_code = null_class_code
 
-    @property
-    def uniquedict(self):
-        idx = self.idx
-        unique_idx = np.unique(idx)
-        m = dict(zip(unique_idx, [[] for _ in range(len(unique_idx))]))
-        for i, id in enumerate(idx):
-            m[id].append(i)
-        return m
+    def _null_column(self, x, prob=False):
+        x = np.atleast_2d(x)
+        n_samples, n_classes = x.shape
+        # If x is a vector of zeros and ones
+        if not prob:
+            return x.sum(axis=1) == 0
+        # if x is a vector of probabilities
+        else:
+            counter = 0
+            null_column = np.ones(n_samples, dtype=x.dtype)
+            for mask in self.mutually_exclusive:
+                null_column = null_column * (1 - x[:, mask].sum(axis=1))
+                counter += len(mask)
+            null_column = null_column * np.prod(1 - x[:, counter:], axis=1)
+            return null_column
 
-    @property
-    def all_classes(self):
-        return self.classes + [self.null_class]
+    @classmethod
+    def read_csv(cls, path):
+        df = pd.read_csv(path)
+        return cls(df['code'], df['group'])
+
+    def to_csv(self, path):
+        pd.DataFrame({'code': self.original_code, 'group': self.original_group}).to_csv(path, index=False)
 
     @property
     def mutually_exclusive(self):
-        m = self.uniquedict
-        return [l for l in list(m.values()) if len(l) > 1]
-
-    @property
-    def subidx(self):
-        m = self.uniquedict
-        subidx = []
-        for l in m.values():
-            for i in range(len(l)):
-                subidx.append(i)
-        return subidx
-
-    @property
-    def class_to_idx(self):
-        return dict(zip(self.classes, self.idx))
-
-    @property
-    def class_to_subidx(self):
-        return dict(zip(self.classes, self.subidx))
+        m = []
+        for c in self.class_code_dict.values():
+            l = len(c)
+            if l > 1:
+                m.append([i+1 for i in range(l)])
+        return m
 
     def __len__(self):
-        return len(self.classes)
+        l = 0
+        for k, v in self.class_code_dict.items():
+            l += len(v)
+        return l
 
-    @property
-    def len_target(self):
-        return len(self) - len(self.mutually_exclusive)
+    def get_target_from_labels(self, labels):
+        len_target = len(self.class_code_dict)
+        target = np.zeros(len_target)
+
+        class_to_idx = dict(zip(self.code, self.idx))
+        class_to_subidx = dict(zip(self.code, self.subidx))
+        for l in labels:
+            if l in self.code:
+                target[class_to_idx[l]] = class_to_subidx[l] + 1
+        return target
 
     def multiclass_to_binaryclass(self, x):
         x = np.atleast_2d(x)
@@ -146,54 +195,26 @@ class DxClasses(object):
         new_x[:, counter:] = x[:, len(self.mutually_exclusive):]
         return np.squeeze(new_x)
 
-    def add_null_column(self, x, prob=False):
-        x = np.atleast_2d(x)
-        n_samples, n_classes = x.shape
-        new_x = np.zeros((n_samples, n_classes + 1), dtype=x.dtype)
-        new_x[:, :-1] = x[:, :]
-        # If x is a vector of zeros and ones
-        if not prob:
-            new_x[:, -1] = x.sum(axis=1) == 0
-        # if x is a vector of probabilities
-        else:
-            counter = 0
-            new_x[:, -1] = 1.0
-            for mask in self.mutually_exclusive:
-                new_x[:, -1] = x[:, -1] * (1 - x[:, mask].sum(axis=1))
-                counter += len(mask)
-            x[:, -1] = x[:, -1] * np.prod(1 - x[:, counter:], axis=1)
-
-        return np.squeeze(new_x)
-
-    def get_target_from_labels(self, labels):
-        target = np.zeros(self.len_target)
-        for l in labels:
-            if l in self.classes:
-                target[self.class_to_idx[l]] = self.class_to_subidx[l] + 1
-        return target
-
-    @classmethod
-    def read_csv(cls, path):
-        with open(path, 'r') as f:
-            classes, idx_classes = f.read().split('\n')
-            classes = classes.split(',')
-            idx_classes = [int(i) for i in idx_classes.split(',')]
-        return cls(classes[1:], idx_classes[1:], classes[0])
-
-    def to_csv(self, path):
-        with open(path, 'w') as f:
-            f.write(self.null_class + ',')
-            f.write(','.join(self.classes))
-            f.write('\n')
-            f.write('-1,')
-            f.write(','.join([str(i) for i in self.idx]))
-
-    def reorganize(self, y, classes):
-        dict_current_order = dict(zip(self.all_classes, range(len(self.all_classes))))
-        new_idx = [dict_current_order[c] for c in classes if c in self.all_classes]
-        valid_idx = np.isin(classes, self.all_classes)
-        new_y = np.zeros(len(classes), dtype=y.dtype)
-        new_y[valid_idx] = y[new_idx]
+    def reorganize(self, y, classes=None, prob=False):
+        if classes is None:
+            classes = self.original_code
+        dict_current_order = dict(zip(self.code, self.idx))
+        new_idx = [dict_current_order[c] for c in classes if c in self.code]
+        valid_idx = np.isin(classes, self.code)
+        new_y = np.zeros(list(y.shape[:-1]) + [len(classes)], dtype=y.dtype)
+        new_y[..., valid_idx] = y[..., new_idx]
+        if (self.null_class_code is not None) and (self.null_class_code in classes):
+            new_y[..., classes.index(self.null_class_code)] = self._null_column(y, prob)
         return new_y
+
+    def compute_threshold(self, dset, ids):
+        dset.use_only_header(True)
+        targets = np.stack([self.get_target_from_labels(s['labels']) for s in dset[ids]])
+        dset.use_only_header(False)
+        y_true = self.multiclass_to_binaryclass(targets)
+        threshold = y_true.sum(axis=0) / y_true.shape[0]
+        return threshold
+
+
 
 

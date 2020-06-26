@@ -27,13 +27,9 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         # Get threshold
         y_pred = (y_score > threshold).astype(int)
 
-        # Add column corresponding to normal
-        y_score = dx.add_null_column(y_score, prob=True)
-        y_pred = dx.add_null_column(y_pred, prob=False)
-
         # Reorder according to vector classes
-        y_score = dx.reorganize(y_score, classes)
-        y_pred = dx.reorganize(y_pred, classes)
+        y_score = dx.reorganize(y_score, classes, prob=True)
+        y_pred = dx.reorganize(y_pred, classes, prob=False)
     return y_pred, y_score
 
 
@@ -72,6 +68,6 @@ def load_12ECG_model():
     threshold = ckpt['threshold']
 
     # Output layer
-    out_layer = OutputLayer(config_dict['batch_size'], dx, device)
+    out_layer = OutputLayer(max(config_dict['batch_size'], 1000), dx, device)
 
     return model, dx, out_layer, threshold, config_dict, device
