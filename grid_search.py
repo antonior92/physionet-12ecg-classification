@@ -34,20 +34,18 @@ def execute(trial):
     #train.py setup
     train_set_up =('python train.py --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
-        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
-        '--lr_factor {}'.format(trial.suggest_loguniform('lr_factor',0.0001,1)),
-        '--lr {}'.format(trial.suggest_loguniform('lr', 0.0001, 1)) ,
-        '--batch_size {}'.format(trial.suggest_int('batch_size', 15, 300)),
-        '--emb_size {}'.format(trial.suggest_int('pre_emb_size',25,100)))
+        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)))
     
     #pretrain comand
     pre_cmd = " ".join(pre_set_up)
     #subp.check_call(pre_cmd, shell=True)s
     #os.system(pre_cmd) primeiro teste na gpu do dce
+    
     #train command
     train_cmd = " ".join(train_set_up)
     #subp.check_call(train_cmd, shell=True)
     os.system(train_cmd)    
+    
     #reads csv file
     geom_mean = geom_mean_searcher(i)
 
@@ -85,10 +83,7 @@ search_space = {
     'pre_num_heads':[2],
     'pre_emb_size':[50],
     'kernel_size': [9,15,17],
-    'dropout_rate': [0.3],
-    'lr_factor': [0.1],
-    'lr': [0.01],
-    'batch_size': [32]
+    'dropout_rate': [0.2,0.5,0.8]
 }
 #creates gridsearch folder
 if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) == False:
