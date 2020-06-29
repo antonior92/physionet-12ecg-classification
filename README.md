@@ -9,7 +9,7 @@ git clone git@github.com:antonior92/physionet-12ecg-classification.git
 The requirements are described in `requirements.txt`.
 
 
-## Downloading the dataset from PhysioNet
+## Downloading the datasets from PhysioNet
 The training data can be downloaded from this links (You can use the MD5 hash to verify the integrity of the tar.gz file.):
 - CPSC2018 training set, 6,877 recordings: 
 [link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_CPSC.tar.gz); 
@@ -29,8 +29,15 @@ MD5-hash: 4035a2b496067c4331eecab74695bc67
 - Georgia 12-Lead ECG Challenge Database, 10,344 recordings: 
 [link](https://storage.cloud.google.com/physionet-challenge-2020-12-lead-ecg-public/PhysioNetChallenge2020_Training_E.tar.gz);
  MD5-hash: 594c8cbc02a0aec4c179d2f019b09a7a
-
-Alternatively, from the command line:
+ 
+The data loading procedure used in `train.py` and `pretrain.py` can work with nested directories, so we recommend 
+loading and extracting all the datasets into the same folder. Every thing can be done from the command line by:
+- Create the new folder and move into it:
+```bash
+mkdir training_data  # Or whatever name...
+cd ./training_data
+```
+- Load dataset (with appropriate names):
 ```
 for DSET in Training_CPSC Training_2 Training_StPetersburg Training_PTB Training_PTB-XL Training_E;
 do
@@ -38,9 +45,9 @@ wget -O PhysioNetChallenge2020_$DSET.tar.gz \
 https://cloudypipeline.com:9555/api/download/physionet2020training/PhysioNetChallenge2020_$DSET.tar.gz/
 done;
 ```
-And, them, extract the data:
+- And, them, extract the data:
 ```
-for DSET in Training_E;
+for DSET in Training_CPSC Training_2 Training_StPetersburg Training_PTB Training_PTB-XL Training_E;
 do
 mkdir ./$DSET && tar -xf PhysioNetChallenge2020_$DSET.tar.gz -C ./$DSET --strip-components=1
 done;
