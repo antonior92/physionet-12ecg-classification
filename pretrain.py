@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import random
+
 from models_pretrain.transformer_pretrain import MyTransformer
 from models_pretrain.rnn_pretrain import MyRNN
 from models_pretrain.transformerxl_pretrain import MyTransformerXL
