@@ -1,238 +1,17 @@
-import os
 import json
-import torch
 import argparse
 import datetime
 import pandas as pd
-import random
 from warnings import warn
 from data import *
 from tqdm import tqdm
 import torch.nn as nn
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.nn.utils import clip_grad_norm_
 import random
-import math
 
-
-class PretrainedRNNBlock(nn.Module):
-    """Get reusable part from MyRNN and return new model. Include Linear block with the given output_size."""
-
-    def __init__(self, pretrained, output_size, freeze=False):
-        super(PretrainedRNNBlock, self).__init__()
-        self.rnn = pretrained._modules['rnn']
-        if freeze:
-            for param in self.rnn.parameters():
-                param.requires_grad = False
-        self.linear = nn.Linear(self.rnn.hidden_size, output_size)
-
-    def forward(self, inp):
-        o1, _ = self.rnn(inp.transpose(1, 2))
-        o2 = self.linear(o1)
-        return o2.transpose(1, 2)
-
-
-class MyRNN(nn.Module):
-    """My RNN"""
-
-    def __init__(self, args):
-        super(MyRNN, self).__init__()
-        N_LEADS = 12
-        self.rnn = getattr(nn, args['pretrain_model'].upper())(N_LEADS, args['hidden_size_rnn'], args['num_layers'],
-                                                               dropout=args['dropout'], batch_first=True)
-        self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
-        self.k_steps_ahead = args['k_steps_ahead']
-
-    def forward(self, inp):
-        o1, _ = self.rnn(inp.transpose(1, 2))
-        o2 = self.linear(o1)
-        return o2.transpose(1, 2)
-
-    def get_pretrained(self, output_size, freeze=False):
-        return PretrainedRNNBlock(self, output_size, freeze)
-
-    def get_input_and_targets(self, traces):
-        max_steps_ahead = max(self.k_steps_ahead)
-        inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
-        n = inp.size(2)
-        target = torch.cat([traces[:, :, k:k + n] for k in self.k_steps_ahead], dim=1)
-        return inp, target
-
-
-class PretrainedTransformerBlock(nn.Module):
-    """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
-
-    def __init__(self, pretrained, output_size,  freeze=False):
-        super(PretrainedTransformerBlock, self).__init__()
-        self.N_LEADS = 12
-        self.output_size = output_size
-        self.steps_concat = pretrained.steps_concat
-        self.emb_size = pretrained._modules['decoder'].out_features
-
-        self.pos_encoder = pretrained._modules['pos_encoder']
-        self.transformer_encoder = pretrained._modules['transformer_encoder']
-
-        if freeze:
-            for param in self.transformer_encoder.parameters():
-                param.requires_grad = False
-            for param in self.pos_encoder.parameters():
-                param.requires_grad = False
-            for param in self.transformer_encoder.parameters():
-                param.requires_grad = False
-
-        # self.encoder.out_features is also the output feature size of the transformer
-        self.decoder = nn.Linear(self.emb_size, self.output_size * self.steps_concat)
-
-    def forward(self, src):
-        batch_size, n_feature, seq_len = src.shape
-        # concatenate neighboring samples in feature channel
-        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
-        # put in the right shape for transformer
-        # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
-        src2 = src1.transpose(0, 1)
-        # process data (no mask in transformer used)
-        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
-        src3 = self.pos_encoder(src2)
-        out1 = self.transformer_encoder(src3)
-        out2 = self.decoder(out1)
-        # Go back to original, without neighboring samples concatenated
-        # out3.shape =  batch size, sequence length, n_feature
-        out3 = out2.transpose(0, 1).reshape(-1, seq_len, self.output_size)
-        # Put in the right shape for training stage input
-        output = out3.transpose(1, 2)
-
-        return output
-
-
-class PositionalEncoding(nn.Module):
-    # This is the positional encoding according to paper "Attention is all you need".
-    # Could be changed to learnt encoding
-    r"""Inject some information about the relative or absolute position of the tokens
-        in the sequence. The positional encodings have the same dimension as
-        the embeddings, so that the two can be summed. Here, we use sine and cosine
-        functions of different frequencies.
-    .. math::
-        \text{PosEncoder}(pos, 2i) = sin(pos/10000^(2i/d_model))
-        \text{PosEncoder}(pos, 2i+1) = cos(pos/10000^(2i/d_model))
-        \text{where pos is the word position and i is the embed idx)
-    Args:
-        d_model: the embed dim (required).
-        dropout: the dropout value (default=0.1).
-        max_len: the max. length of the incoming sequence (default=10000).
-    """
-
-    def __init__(self, d_model, dropout=0.1, max_len=10000):
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        r"""Inputs of forward function
-        Args:
-            x: the sequence fed to the positional encoder model (required).
-        Shape:
-            x: [sequence length, batch size, embed dim]
-            output: [sequence length, batch size, embed dim]
-        Examples:
-            >>> output = pos_encoder(x)
-        """
-        x = x + self.pe[:x.size(0), :]
-        return self.dropout(x)
-
-
-# new pre-trained model
-class MyTransformer(nn.Module):
-    """My Transformer:
-    inspired by https://github.com/pytorch/examples/tree/master/word_language_model
-    """
-
-    def __init__(self, args):
-        super(MyTransformer, self).__init__()
-        self.N_LEADS = 12
-        self.mask_param = [args['num_masked_subseq'], args['num_masked_samples']]
-        emb_size = int(self.N_LEADS * args['steps_concat'])
-        self.pos_encoder = PositionalEncoding(emb_size, args['dropout'])
-        encoder_layers = TransformerEncoderLayer(emb_size, args['num_heads'], args['hidden_size_trans'],
-                                                 args['dropout'])
-        self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
-        self.decoder = nn.Linear(emb_size, emb_size)
-        self.steps_concat = args['steps_concat']
-
-    def _generate_triangular_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-
-    def _generate_random_sequence_mask(self, sz, param):
-        """
-        Implementation is quite inefficient so far. Should be improved!
-        Also the implementation does not care about overlapping intervals of masks.
-        This may yield that different number of samples are masked in different sequences.
-
-        According to attention definition the same mask is used for all sequences in the batch.
-        Mask is a [sz x sz] matrix. If the value [i,j] is masked by a value of -inf, then the for the
-        computation of output j the input i is masked, meaning that no attention is used for this input.
-
-        sz - sequence size
-        p - number of non-overlapping masked subsequences
-        m - number of consecutive samples for each p masked subsequences
-        """
-        p = param[0]
-        m = param[1]
-
-        # allocation
-        idx = torch.empty((sz, p * m), dtype=torch.int64)
-
-        # for all rows in the indexing
-        for i in range(sz):
-            # sample p values without replacement
-            a = random.sample(range(sz - m + 1), p)
-            a.sort()
-            idx_row = []
-            for k in range(p):
-                # generate indices for row i which should be masked
-                idx_row.extend(range(a[k], a[k] + m))
-            idx[i, :] = torch.tensor(idx_row)
-
-        # mask the indices with infinity
-        mask = torch.zeros(sz, sz)
-        mask.scatter_(1, idx, float('-inf'))
-        return mask
-
-    def forward(self, src):
-        batch_size, n_feature, seq_len = src.shape
-        # concatenate neighboring samples in feature channel
-        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
-        # put in the right shape for transformer
-        # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
-        src2 = src1.transpose(0, 1)
-        # generate random mask
-        mask = self._generate_random_sequence_mask(len(src2), self.mask_param).to(device)
-        # generate triangular mask ('predict next sample').
-        self.mask = mask
-        # process data
-        src3 = self.pos_encoder(src2)
-        out1 = self.transformer_encoder(src3, self.mask)
-        out2 = self.decoder(out1)
-        # Go back to original, without neigboring samples concatenated
-        # out3.shape =  batch size, sequence length, n_feature
-        out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
-        # Put in the right shape for transformer
-        output = out3.transpose(1, 2)
-        return output
-
-    def get_pretrained(self, output_size, freeze=False):
-        return PretrainedTransformerBlock(self, output_size, freeze)
-
-    def get_input_and_targets(self, traces):
-        return traces, traces
+from models_pretrain.transformer_pretrain import MyTransformer
+from models_pretrain.rnn_pretrain import MyRNN
+from models_pretrain.transformerxl_pretrain import MyTransformerXL
 
 
 def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
@@ -245,17 +24,36 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     str_name = 'train' if train else 'val'
     desc = "Epoch {:2d}: {} - Loss: {:.6f}"
     bar = tqdm(initial=0, leave=True, total=len(loader), desc=desc.format(ep, str_name, 0), position=0)
-    for i, batch in enumerate(train_loader):
+    # create initial memory (required for transformer xl)
+    mems = []
+    if args.pretrain_model.lower() == 'transformerxl':
+        param = next(model.parameters())
+        for i in range(args.num_trans_layers + 1):
+            # empty = torch.empty(0, dtype=param.dtype, device=param.device)
+            empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
+                                dtype=param.dtype, device=param.device, requires_grad=False)
+            mems.append(empty)
+    # loop over all batches
+    for i, batch in enumerate(loader):
         # Send to device
         traces, _, ids, sub_ids = batch
         traces = traces.to(device=device)
         # create model input and targets
         inp, target = model.get_input_and_targets(traces)
+        if args.pretrain_model.lower() == 'transformerxl':
+            if len(mems) is not 0:
+                # reset memory depending on sub_ids (required for transformer xl)
+                # create mask to only change if sub_ids is zero
+                mask = (torch.tensor(sub_ids) != 0).float().to(device=param.device)
+                mask = mask[None, :, None]
+                mask = mask.repeat(args.mem_len, 1, args.dim_model)
+                for i in range(args.num_trans_layers + 1):
+                    mems[i] = mems[i] * mask
         if train:
             # Reinitialize grad
             model.zero_grad()
             # Forward pass
-            output = model(inp)
+            output, mems = model(inp, mems)
             ll = loss(output, target)
             # Backward pass
             ll.backward()
@@ -264,7 +62,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
             optimizer.step()
         else:
             with torch.no_grad():
-                output = model(inp)
+                output, mems = model(inp, mems)
                 ll = loss(output, target)
         # Update
         total_loss += ll.detach().cpu().numpy()
@@ -280,15 +78,15 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
-                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
+    config_parser.add_argument('--pretrain_model', type=str, default='transformer',
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer, Transformer XL (default)')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--epochs', type=int, default=125,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
-    config_parser.add_argument('--seq_length', type=int, default=4096,
+    config_parser.add_argument('--seq_length', type=int, default=1024,
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
@@ -321,17 +119,23 @@ if __name__ == '__main__':
                                help="Number of attention heads. Default is 5.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
                                help="Number of transformer blocks. Default is 2.")
-    config_parser.add_argument('--emb_size', type=int, default=50,
-                               help="Embedding size for transformer. Default is 50.")
-    config_parser.add_argument('--hidden_size_trans', type=int, default=50,
-                               help="Hidden size transformer. Default is 50.")
-    config_parser.add_argument('--num_masked_subseq', type=int, default=5,
-                               help="Number of attention masked subsequences. Default is 75.")
+    config_parser.add_argument('--dim_model', type=int, default=10,
+                               help="Internal dimension of transformer. Default is 50.")
+    config_parser.add_argument('--dim_inner', type=int, default=10,
+                               help="Size of the FF network in the transformer. Default is 50.")
     config_parser.add_argument('--num_masked_samples', type=int, default=8,
-                               help="Number of attention masked consecutive samples. Default is 8.")
+                               help="Number of consecutive samples masked for attention. Default is 8.")
+    config_parser.add_argument('--perc_masked_samp', type=int, default=0.15,
+                               help="Percentage of total masked samples. Default is 0.15.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input (default: 4)')
-
+    # additional parameters for transformer xl
+    config_parser.add_argument('--mem_len', type=int, default=100,
+                               help="Memory length of transformer xl. Default is 1000.")
+    config_parser.add_argument('--dropout_attn', type=float, default=0.2,
+                               help='attention mechanism dropout rate. Default is 0.2.')
+    config_parser.add_argument('--init_std', type=float, default=0.02,
+                               help='standard devition of normal initialization. Default is 0.02.')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -380,7 +184,7 @@ if __name__ == '__main__':
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
     tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
-               .format(n_train, 100*n_train/n_total,n_valid, 100*n_valid/n_total))
+               .format(n_train, 100 * n_train / n_total, n_valid, 100 * n_valid / n_total))
     # Get ids
     all_ids = dset.get_ids()
     rng.shuffle(all_ids)
@@ -394,17 +198,33 @@ if __name__ == '__main__':
     # Define dataset
     train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
     valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
+    # BELOW IS TEMPORARY!!! make loaders shorter since batch_sizes will not be constant after idx.
+    if args.pretrain_model.lower() == 'transformerxl':
+        for i in range(len(train_loader)):
+            if train_loader[i][0].shape[0] < args.batch_size:
+                idx = i
+                break
+        train_loader = train_loader[:idx]
+        for i in range(len(valid_loader)):
+            if valid_loader[i][0].shape[0] < args.batch_size:
+                idx = i
+                break
+        valid_loader = valid_loader[:idx]
+    # ABOVE IS TEMPORARY!!!
 
     # Get number of batches
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    if args.pretrain_model.lower() == 'transformer':
+    if args.pretrain_model.lower() == 'transformerxl':
+        model = MyTransformerXL(vars(args))
+    elif args.pretrain_model.lower() == 'transformer':
         model = MyTransformer(vars(args))
     elif args.pretrain_model.lower() in {'rnn', 'lstm', 'gru'}:
         model = MyRNN(vars(args))
     model.to(device=device)
-    tqdm.write("Done!")
+    message = "Done! Chosen model: {}".format(args.pretrain_model)
+    tqdm.write(message)
 
     tqdm.write("Define optimizer...")
     optimizer = torch.optim.Adam(model.parameters(), args.lr)

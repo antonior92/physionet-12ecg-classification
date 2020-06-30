@@ -49,6 +49,8 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
             pretrained = MyRNN(pretrain_stage_config)
         elif pretrain_stage_config['pretrain_model'].lower() == 'transformer':
             pretrained = MyTransformer(pretrain_stage_config)
+        elif pretrain_stage_config['pretrain_model'].lower() == 'transformerxl':
+            pretrained = MyTransformerXL(pretrain_stage_config)
         if pretrain_stage_ckpt is not None:
             pretrained.load_state_dict(pretrain_stage_ckpt['model'])
         ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
@@ -242,7 +244,7 @@ if __name__ == '__main__':
         with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
             pretrain_ids = f.read().split(',')
         # Import pretrain only if needed
-        from pretrain import MyRNN, MyTransformer
+        from pretrain import MyRNN, MyTransformer, MyTransformerXL
     except:
         ckpt_pretrain_stage = None
         config_dict_pretrain_stage = None
