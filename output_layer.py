@@ -88,11 +88,26 @@ class OutputLayer(object):
 
 class DxClasses(object):
 
-    def __init__(self, class_code, group=None):
+    @classmethod
+    def read_csv(cls, path):
+        df = pd.read_csv(path)
+        return cls(df['code'], df['group'])
+
+    def to_csv(self, path):
+        pd.DataFrame({'code': self.original_code, 'group': self.original_group}).to_csv(path, index=False)
+
+    def __init__(self, class_code, group=None, null_code=None):
         class_code = [str(c) for c in list(class_code)]
         # Replace with defaults
         if group is None:
-            group = range(len(class_code))
+            group = []
+            i = 0
+            for c in class_code:
+                if c != null_code:
+                    group.append(str(i))
+                else:
+                    group.append('*')
+                i += 1
         else:
             group = list(group)
         # Group classes in a dictionary by 'group'
@@ -147,14 +162,6 @@ class DxClasses(object):
                 counter += len(mask)
             null_column = null_column * np.prod(1 - x[:, counter:], axis=1)
             return null_column
-
-    @classmethod
-    def read_csv(cls, path):
-        df = pd.read_csv(path)
-        return cls(df['code'], df['group'])
-
-    def to_csv(self, path):
-        pd.DataFrame({'code': self.original_code, 'group': self.original_group}).to_csv(path, index=False)
 
     @property
     def mutually_exclusive(self):

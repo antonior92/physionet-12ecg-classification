@@ -13,17 +13,27 @@ from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from output_layer import OutputLayer, collapse, DxClasses
-from evaluate_12ECG_score import compute_beta_score
+from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
+                                  compute_challenge_metric, load_weights)
 
 
-def get_metrics(y_true, y_pred):
-    """Return dictionary with relevant metrics"""
-    accuracy, f_measure, f_beta, g_beta = compute_beta_score(y_true, y_pred,  num_classes=y_pred.shape[1],
-                                                             beta=2, check_errors=True)
+class GetMetrics(object):
 
-    geometric_mean = np.sqrt(f_beta*g_beta)
+    def __init__(self, weights, normal_index=None):
+        """Compute metrics"""
+        self.weights = weights
+        self.normal_index = normal_index
 
-    return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta, 'geom_mean': geometric_mean}
+    def __call__(self, y_true, y_pred, y_score):
+        """Return dictionary with relevant metrics"""
+        auroc, auprc = compute_auc(y_true, y_score)
+        accuracy = compute_accuracy(y_true, y_pred)
+        f_measure = compute_f_measure(y_true, y_pred)
+        f_beta, g_beta = compute_beta_measures(y_true, y_pred, beta=2)
+        challenge_metric = compute_challenge_metric(self.weights, y_true, y_pred, self.normal_index)
+        geometric_mean = np.sqrt(f_beta*g_beta)
+        return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta,
+                'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
 
 
 def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
@@ -212,8 +222,8 @@ if __name__ == '__main__':
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
                             help='input folder.')
-    sys_parser.add_argument('--classes', type=str, const='./classes.csv', default='', nargs='?',
-                            help='File specifying classes: names and mutually exclusiveness.')
+    sys_parser.add_argument('--dx', type=str, default='./dx',
+                            help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
     sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/output_prestage_transformer_old',
@@ -297,13 +307,24 @@ if __name__ == '__main__':
 
     # Define and save classes
     tqdm.write("Define output layer...")
-    if settings.classes:
-        dx = DxClasses.read_csv(os.path.join(settings.classes))
-    else:
+    try:
+        df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
+        classes = [str(c) for c in list(df['SNOMED CT Code'])]
+        with open(os.path.join(settings.dx, 'null_class.txt')) as f:
+            null_code = f.read()
+        null_index = classes.index(str(null_code))
+        dx = DxClasses(classes, null_code=null_code)
+    except:
         classes = dset.get_classes()
-        dx = DxClasses(classes, range(len(classes)))
+        null_index = None
+        dx = DxClasses(classes)
     dx.to_csv(os.path.join(folder, 'classes.txt'))
     out_layer = OutputLayer(args.batch_size, dx, device)
+    tqdm.write("Done!")
+
+    tqdm.write("Define metrics...")
+    weights = load_weights(os.path.join(settings.dx, 'weights.csv'), classes)
+    get_metrics = GetMetrics(weights, null_index)
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
@@ -322,7 +343,7 @@ if __name__ == '__main__':
     tqdm.write("Define threshold ...")
     threshold = dx.compute_threshold(dset, train_ids)
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.2f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
+    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
@@ -349,12 +370,13 @@ if __name__ == '__main__':
         unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
         # Get zero one prediction
         y_pred = y_score > threshold
-        y_pred = dx.reorganize(y_pred)
+        y_pred = dx.reorganize(y_pred, classes, prob=False)
+        y_score = dx.reorganize(y_score, classes, prob=True)
         # Get metrics
         y_true = dx.multiclass_to_binaryclass(all_targets)
         _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
         y_true = dx.reorganize(y_true)
-        metrics = get_metrics(y_true, y_pred)
+        metrics = get_metrics(y_true, y_pred, y_score)
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
