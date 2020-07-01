@@ -39,11 +39,12 @@ cd ./training_data
 ```
 - Load dataset (with appropriate names):
 ```
-for DSET in Training_CPSC Training_2 Training_StPetersburg Training_PTB Training_PTB-XL Training_E;
+for DSET in Training_CPSC Training_2 Training_StPetersburg Training_PTB PTB-XL Training_E;
 do
 wget -O PhysioNetChallenge2020_$DSET.tar.gz \
 https://cloudypipeline.com:9555/api/download/physionet2020training/PhysioNetChallenge2020_$DSET.tar.gz/
 done;
+mv PhysioNetChallenge2020_PTB-XL.tar.gz PhysioNetChallenge2020_Training_PTB-XL.tar.gz
 ```
 - And, them, extract the data:
 ```

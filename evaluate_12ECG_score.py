@@ -43,6 +43,7 @@
 # # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np, os, os.path, sys
+from warnings import warn
 
 
 def evaluate_12ECG_score(label_directory, output_directory):
@@ -538,6 +539,7 @@ def compute_modified_confusion_matrix(labels, outputs):
 
 # Compute the evaluation metric for the Challenge.
 def compute_challenge_metric(weights, labels, outputs, normal_index):
+
     # Compute observed score.
     num_recordings, num_classes = np.shape(labels)
     A = compute_modified_confusion_matrix(labels, outputs)
@@ -548,10 +550,11 @@ def compute_challenge_metric(weights, labels, outputs, normal_index):
     A = compute_modified_confusion_matrix(labels, correct_outputs)
     correct_score = np.nansum(weights * A)
 
-    # Compute score for model that always chooses the normal label.
     if normal_index is None:
+        warn("No normalization when computing challenge_metric!!")
         return observed_score
 
+    # Compute score for model that always chooses the normal label.
     inactive_outputs = np.zeros((num_recordings, num_classes), dtype=np.bool)
     inactive_outputs[:, normal_index] = 1
     A = compute_modified_confusion_matrix(labels, inactive_outputs)

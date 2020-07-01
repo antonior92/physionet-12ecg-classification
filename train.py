@@ -310,21 +310,20 @@ if __name__ == '__main__':
     try:
         df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
         classes = [str(c) for c in list(df['SNOMED CT Code'])]
-        with open(os.path.join(settings.dx, 'null_class.txt')) as f:
-            null_code = f.read()
-        null_index = classes.index(str(null_code))
-        dx = DxClasses(classes, null_code=null_code)
-    except:
-        classes = dset.get_classes()
-        null_index = None
         dx = DxClasses(classes)
+    except:
+        warn("Failed to load dx mappings!")
+        classes = dset.get_classes()
+        dx = DxClasses(classes)
+        print(classes)
     dx.to_csv(os.path.join(folder, 'classes.txt'))
     out_layer = OutputLayer(args.batch_size, dx, device)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
     weights = load_weights(os.path.join(settings.dx, 'weights.csv'), classes)
-    get_metrics = GetMetrics(weights, null_index)
+    NORMAL = '426783006'
+    get_metrics = GetMetrics(weights, classes.index(NORMAL))
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
@@ -383,15 +382,16 @@ if __name__ == '__main__':
         # Print message
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \
+                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
             .format(ep, train_loss, valid_loss, learning_rate,
                     metrics['f_beta'], metrics['g_beta'],
-                    metrics['geom_mean'])
+                    metrics['challenge_metric'])
         tqdm.write(message)
         # Save history
         history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
                                   "lr": learning_rate, "f_beta": metrics['f_beta'],
-                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean']},
+                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean'],
+                                  'challenge_metric': metrics['challenge_metric']},
                                  ignore_index=True)
         history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
