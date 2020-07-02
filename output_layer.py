@@ -151,9 +151,11 @@ class DxClasses(object):
     def mutually_exclusive(self):
         m = []
         if self._mutually_exclusive is not None:
-            for c in self._mutually_exclusive:
-                l = len(c)
-                m.append([i+1 for i in range(l)])
+            for mutually_exclusive_sublist in self._mutually_exclusive:
+                aux_list = []
+                for c in mutually_exclusive_sublist:
+                    aux_list.append(self.code.index(c))
+                m.append(aux_list)
         return m
 
     def __len__(self):
@@ -183,10 +185,8 @@ class DxClasses(object):
         new_x[:, counter:] = x[:, len(self.mutually_exclusive):]
         return np.squeeze(new_x)
 
-    def reorganize(self, y, classes=None, prob=False):
-        if classes is None:
-            classes = self.original_code
-        dict_current_order = dict(zip(self.code, self.idx))
+    def reorganize(self, y, classes, prob=False):
+        dict_current_order = dict(zip(self.code, range(len(self.code))))
         new_idx = [dict_current_order[c] for c in classes if c in self.code]
         valid_idx = np.isin(classes, self.code)
         new_y = np.zeros(list(y.shape[:-1]) + [len(classes)], dtype=y.dtype)
