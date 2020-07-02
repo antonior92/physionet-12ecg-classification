@@ -98,9 +98,9 @@ if __name__ == '__main__':
                                help="Path with the model outputs.")
     config_parser.add_argument('--dataset_folder', type=str, default="./Training_WFDB/",
                                help="Path with the training data.")
-    config_parser.add_argument('--train_ids_path', type=str, default="./train_ids.txt",
+    config_parser.add_argument('--train_ids_path', type=str, default="./mdl/train_ids.txt",
                                help="Path with the train ids used by the model.")
-    config_parser.add_argument('--val_ids_path', type=str, default="./valid_ids.txt",
+    config_parser.add_argument('--val_ids_path', type=str, default="./mdl/valid_ids.txt",
                                help="Path with the test ids used by the model.")
 
     args = config_parser.parse_args()
@@ -136,10 +136,10 @@ if __name__ == '__main__':
                 for val in ["age", "signal_len", "is_male"]:
                     stat_array = df[df[subset]][cell][val].values
                     cell_mean = np.mean(stat_array)
-                    cell_ci_mean = ci(bootstrap(stat_array, func=np.mean))
+                    cell_ci_mean = (0, 0)
                     cell_ci_mean = (cell_ci_mean[1] - cell_ci_mean[0]) / 2
                     cell_median = np.median(stat_array)
-                    cell_ci_median = ci(bootstrap(stat_array, func=np.median))
+                    cell_ci_median = (0, 0)
                     cell_ci_median = (cell_ci_median[1] - cell_ci_median[0]) / 2
                     strs_cells.append("mean({}):".format(val).ljust(21) +
                                       " {}+{}".format(round(cell_mean, 2), round(cell_ci_mean, 2)))

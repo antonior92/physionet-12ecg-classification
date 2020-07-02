@@ -2,8 +2,18 @@ import torch
 import numpy as np
 
 
+def get_collapse_fun(args):
+    # choose collapse function
+    if args['pred_stage_type'].lower() == 'mean':
+        return lambda y: np.mean(y, axis=0)
+    elif args['pred_stage_type'].lower() == 'max':
+        return lambda y: np.max(y, axis=0)
+    elif args['pred_stage_type'].lower() in ['lstm', 'gru', 'rnn']:
+        return lambda y: y[-1]
+
+
 def collapse(x, ids, fn, unique_ids=None):
-    """Colapse arrays with the same ids using fn.
+    """Collapse arrays with the same ids using fn.
 
     Be `x` an array (N, *) and ids a sequence with N elements, possibly with repeated entries, `M` unique ids
     return a tuple containing the unique ids and a array with shape (M, *)  where the i-th entry
@@ -30,7 +40,7 @@ class OutputLayer(object):
         self.softmax_mask = softmax_mask
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='sum')
         self.ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
-        self.sigmoid =torch.nn.Sigmoid()
+        self.sigmoid = torch.nn.Sigmoid()
         self.softmax = torch.nn.Softmax(dim=-1)
 
     def _get_output_components(self, output):
@@ -55,7 +65,6 @@ class OutputLayer(object):
     def loss(self, output, target):
         softmax_outputs, sigmoid_outputs = self._get_output_components(output)
         softmax_targets, sigmoid_targets = self._get_target_components(target)
-
 
         loss = 0
         for i, _ in enumerate(self.softmax_mask):
