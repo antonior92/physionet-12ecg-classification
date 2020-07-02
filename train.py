@@ -1,3 +1,4 @@
+import os
 import json
 import argparse
 import torch
@@ -194,10 +195,6 @@ if __name__ == '__main__':
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
-    config_parser.add_argument('--finetuning', action='store_true',
-                               help='when there is a pre-trained model, by default it '
-                                    'freezes the weights of the pre-trained model, but with this option'
-                                    'these weight will be fine-tunned during training.')
     # Model parameters
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
@@ -217,6 +214,17 @@ if __name__ == '__main__':
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
+    config_parser.add_argument('--finetuning',  action='store_true',
+                                help='when there is a pre-trained model, by default it '
+                                     'freezes the weights of the pre-trained model, but with this option'
+                                     'these weight will be fine-tunned during training.')
+    config_parser.add_argument('--train_classes',  choices=['dset', 'scored'], default='scored_classes',
+                                help='what classes are to be used during training.')
+    config_parser.add_argument('--valid_classes',  choices=['dset', 'scored'], default='scored_classes',
+                                help='what classes are to be used during evaluation.')
+    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax'],
+                                help='what is the type used for the output layer. Options are '
+                                     '(sigmoid, sigmoid-and-softmax). The firs uses mutually exclusive option.')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -305,25 +313,31 @@ if __name__ == '__main__':
         f.write(','.join(valid_ids))
     tqdm.write("Done!")
 
-    # Define and save classes
     tqdm.write("Define output layer...")
-    try:
-        df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
-        classes = [str(c) for c in list(df['SNOMED CT Code'])]
-        dx = DxClasses(classes)
-    except:
-        warn("Failed to load dx mappings!")
-        classes = dset.get_classes()
-        dx = DxClasses(classes)
-        print(classes)
-    dx.to_csv(os.path.join(folder, 'classes.txt'))
+    # Get all classes in the dataset
+    dset_classes = dset.get_classes()
+    # Get all classes to be scored
+    df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
+    scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
+    # Get training classes
+    train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
+    valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
+    # Get mutually exclusive entries
+    if args.outlayer == 'sigmoid-and-softmax':
+        with open(os.path.join(settings.dx, 'mutually_exclusivity.txt'), 'r') as file:
+            mutually_exclusive = [line.split(',') for line in file.read().split('\n')]
+        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
+            null_class = file.read()
+        dx = DxClasses(train_classes, mutually_exclusive, null_class)
+    else:
+        dx = DxClasses(train_classes)
     out_layer = OutputLayer(args.batch_size, dx, device)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
-    weights = load_weights(os.path.join(settings.dx, 'weights.csv'), classes)
+    weights = load_weights(os.path.join(settings.dx, 'weights.csv'), valid_classes)
     NORMAL = '426783006'
-    get_metrics = GetMetrics(weights, classes.index(NORMAL))
+    get_metrics = GetMetrics(weights, valid_classes.index(NORMAL))
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
@@ -369,12 +383,12 @@ if __name__ == '__main__':
         unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
         # Get zero one prediction
         y_pred = y_score > threshold
-        y_pred = dx.reorganize(y_pred, classes, prob=False)
-        y_score = dx.reorganize(y_score, classes, prob=True)
+        y_pred = dx.reorganize(y_pred, valid_classes, prob=False)
+        y_score = dx.reorganize(y_score, valid_classes, prob=True)
         # Get metrics
-        y_true = dx.multiclass_to_binaryclass(all_targets)
+        y_true = dx.target_to_binaryclass(all_targets)
         _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-        y_true = dx.reorganize(y_true)
+        y_true = dx.reorganize(y_true, valid_classes)
         metrics = get_metrics(y_true, y_pred, y_score)
         # Get learning rate
         for param_group in optimizer.param_groups:

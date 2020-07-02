@@ -1,4 +1,6 @@
 import torch
+import operator
+import functools
 import numpy as np
 import pandas as pd
 
@@ -88,64 +90,46 @@ class OutputLayer(object):
 
 class DxClasses(object):
 
-    @classmethod
-    def read_csv(cls, path):
-        df = pd.read_csv(path)
-        return cls(df['code'], df['group'])
-
-    def to_csv(self, path):
-        pd.DataFrame({'code': self.original_code, 'group': self.original_group}).to_csv(path, index=False)
-
-    def __init__(self, class_code, group=None, null_code=None):
-        class_code = [str(c) for c in list(class_code)]
-        # Replace with defaults
-        if group is None:
-            group = []
-            i = 0
-            for c in class_code:
-                if c != null_code:
-                    group.append(str(i))
-                else:
-                    group.append('*')
-                i += 1
-        else:
-            group = list(group)
-        # Group classes in a dictionary by 'group'
-        groups = np.unique(group)
-        class_code_dict = dict(zip(groups, [[] for _ in range(len(groups))]))
-        for c, g in zip(class_code, group):
-            class_code_dict[g].append(c)
-        # Remove null class if present
-        if '*' in class_code_dict.keys():
-            null_class_code = class_code_dict['*']
-            del class_code_dict['*']
-        else:
-            null_class_code = None
+    def __init__(self, classes, mutually_exclusive=None, null_class=None):
         # Get idx and subidx
-        lgroup = []
         idx = []
         code = []
         subidx = []
         i = 0
-        for g, v in sorted(class_code_dict.items(), key=lambda x: len(x[1]), reverse=True):
-            j = 0
-            for vv in v:
-                # set idx and group
-                lgroup.append(g)
-                idx.append(i)
-                # set subidx and code
-                code.append(vv)
-                subidx.append(j)
-                j += 1
+        # Convert to set/string
+        classes = set([str(c) for c in classes])
+        # Remove mutually_exclussive from classes
+        if mutually_exclusive is not None:
+            all_mutually_exclusive = functools.reduce(operator.add, (m for m in mutually_exclusive))
+            classes = classes.difference(all_mutually_exclusive)
+            for mutually_exclusive_sublist in mutually_exclusive:
+                j = 0
+                for c in mutually_exclusive_sublist:
+                    # set idx and group
+                    idx.append(i)
+                    code.append(c)
+                    subidx.append(j)
+                    j += 1
+                i += 1
+        if null_class is not None:
+            classes = classes.difference([null_class])
+
+        # Convert to list
+        classes = list(classes)
+        for c in classes:
+            # set idx and group
+            idx.append(i)
+            code.append(c)
+            subidx.append(0)
             i += 1
-        self.original_code = class_code
-        self.original_group = group
-        self.class_code_dict = class_code_dict
-        self.group = lgroup
+
+        self.classes = classes
+        self._mutually_exclusive = mutually_exclusive
+        self.null_class = null_class
         self.idx = idx
         self.code = code
         self.subidx = subidx
-        self.null_class_code = null_class_code
+        self.target_len = i
 
     def _null_column(self, x, prob=False):
         x = np.atleast_2d(x)
@@ -166,20 +150,17 @@ class DxClasses(object):
     @property
     def mutually_exclusive(self):
         m = []
-        for c in self.class_code_dict.values():
-            l = len(c)
-            if l > 1:
+        if self._mutually_exclusive is not None:
+            for c in self._mutually_exclusive:
+                l = len(c)
                 m.append([i+1 for i in range(l)])
         return m
 
     def __len__(self):
-        l = 0
-        for k, v in self.class_code_dict.items():
-            l += len(v)
-        return l
+        return len(self.code)
 
     def get_target_from_labels(self, labels):
-        len_target = len(self.class_code_dict)
+        len_target = self.target_len
         target = np.zeros(len_target)
 
         class_to_idx = dict(zip(self.code, self.idx))
@@ -189,7 +170,7 @@ class DxClasses(object):
                 target[class_to_idx[l]] = class_to_subidx[l] + 1
         return target
 
-    def multiclass_to_binaryclass(self, x):
+    def target_to_binaryclass(self, x):
         x = np.atleast_2d(x)
         n_samples = x.shape[0]
         new_x = np.zeros((n_samples, len(self)), dtype=bool)
@@ -210,15 +191,15 @@ class DxClasses(object):
         valid_idx = np.isin(classes, self.code)
         new_y = np.zeros(list(y.shape[:-1]) + [len(classes)], dtype=y.dtype)
         new_y[..., valid_idx] = y[..., new_idx]
-        if (self.null_class_code is not None) and (self.null_class_code in classes):
-            new_y[..., classes.index(self.null_class_code)] = self._null_column(y, prob)
+        if (self.null_class is not None) and (self.null_class in classes):
+            new_y[..., classes.index(self.null_class)] = self._null_column(y, prob)
         return new_y
 
     def compute_threshold(self, dset, ids):
         dset.use_only_header(True)
         targets = np.stack([self.get_target_from_labels(s['labels']) for s in dset[ids]])
         dset.use_only_header(False)
-        y_true = self.multiclass_to_binaryclass(targets)
+        y_true = self.target_to_binaryclass(targets)
         threshold = y_true.sum(axis=0) / y_true.shape[0]
         return threshold
 
