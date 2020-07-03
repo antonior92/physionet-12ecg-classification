@@ -222,9 +222,9 @@ if __name__ == '__main__':
                                 help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes',  choices=['dset', 'scored'], default='scored_classes',
                                 help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax'],
+    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'],
                                 help='what is the type used for the output layer. Options are '
-                                     '(sigmoid, sigmoid-and-softmax). The firs uses mutually exclusive option.')
+                                     '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -328,6 +328,11 @@ if __name__ == '__main__':
             mutually_exclusive = [line.split(',') for line in file.read().split('\n')]
         with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
             null_class = file.read()
+        dx = DxClasses(train_classes, mutually_exclusive, null_class)
+    if args.outlayer == 'softmax':
+        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
+            null_class = file.read()
+        mutually_exclusive = [list(set(train_classes).difference([null_class]))]
         dx = DxClasses(train_classes, mutually_exclusive, null_class)
     else:
         dx = DxClasses(train_classes)
