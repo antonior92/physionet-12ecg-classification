@@ -130,7 +130,10 @@ class ECGDataset(abc.Sequence):
         for idx in range(len(self)):
             header = self._getsample(idx, only_header=True)
             for l in header['labels']:
-                counts[class_to_idx[l]] += 1
+                try:
+                    counts[class_to_idx[l]] += 1
+                except KeyError:
+                    pass
         return counts
 
     def __len__(self):

@@ -382,7 +382,8 @@ if __name__ == '__main__':
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
         # Get zero one prediction
-        y_pred = y_score > threshold
+        y_pred_aux = dx.apply_threshold(y_score, threshold)
+        y_pred = dx.target_to_binaryclass(y_pred_aux)
         y_pred = dx.reorganize(y_pred, valid_classes, prob=False)
         y_score = dx.reorganize(y_score, valid_classes, prob=True)
         # Get metrics

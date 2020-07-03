@@ -203,6 +203,21 @@ class DxClasses(object):
         threshold = y_true.sum(axis=0) / y_true.shape[0]
         return threshold
 
-
-
-
+    def apply_threshold(self, y_score, threshold):
+        n_records = y_score.shape[0]
+        n_softmax_outputs = 0
+        y_pred = np.zeros((n_records, self.target_len), dtype=int)
+        for i, mask in enumerate(self.mutually_exclusive):
+            # Compute masked value
+            y_masked = y_score[:, mask]
+            y_subgroup = np.hstack([1 - np.sum(y_masked, axis=1)[:, None], y_masked])
+            # Correct for threshold
+            threshold_masked = threshold[mask]
+            threshold_subgroup = np.hstack([1 - np.sum(threshold_masked), threshold_masked])
+            y_subgroup = y_subgroup / threshold_subgroup
+            # Compute maximum value
+            y_subgroup.argmax(axis=1, out=y_pred[:, i])
+            # Go to next one
+            n_softmax_outputs += len(mask)
+        y_pred[:, len(self.mutually_exclusive):] = y_score[:, n_softmax_outputs:] > threshold[n_softmax_outputs:]
+        return y_pred
