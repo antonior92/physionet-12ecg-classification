@@ -82,14 +82,19 @@ def get_batches(batch_size, ids, counts, drop_last=False):
     dict_ids_counts = dict(zip(list(ids), list(counts)))
     constant_volume_dicts = to_constant_volume(dict_ids_counts, min_n_batches)
     # Get ids from dicts
-    all_ids = [[id for id in ith_ids] for ith_ids in constant_volume_dicts]
+    all_ids = [[id for id in ith_ids.keys()] for ith_ids in constant_volume_dicts]
     # Get ids for each of the batches
     batches = all_ids[:batch_size]
     # Distribute remainders
     if not drop_last:
         for i, id in enumerate(itertools.chain(*all_ids[batch_size:])):
             batches[i % batch_size].append(id)
-    return batches
+    # Compute total number of samples
+    if drop_last:
+        n_samples = sum([sum(ith_volume.values())for ith_volume in constant_volume_dicts][:batch_size])
+    else:
+        n_samples = sum([sum(ith_volume.values())for ith_volume in constant_volume_dicts])
+    return batches, n_samples
 
 
 class ECGBatchloader(abc.Iterable):
@@ -100,8 +105,9 @@ class ECGBatchloader(abc.Iterable):
         self.transformation = lambda s: SplitLongSignals(s, length, min_length)
         dset.use_only_header(True)
         counts = [len(self.transformation(s)) for s in dset[ids]]
+
         dset.use_only_header(False)
-        self.batches = get_batches(batch_size, ids, counts, drop_last)
+        self.batches, self.l = get_batches(batch_size, ids, counts, drop_last)
 
         def collapsing_fn(batch):
             traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32) for s in batch], dim=0)
@@ -124,4 +130,4 @@ class ECGBatchloader(abc.Iterable):
         return batch_loader
 
     def __len__(self):
-        return max([len(b) for b in self.batches])
+        return self.l

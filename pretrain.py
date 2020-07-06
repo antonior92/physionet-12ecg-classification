@@ -11,7 +11,7 @@ from torch.nn.utils import clip_grad_norm_
 import random
 import math
 
-from data.ecg_dataloader import get_batchloader
+from data.ecg_dataloader import ECGBatchloader
 
 
 class PretrainedRNNBlock(nn.Module):
@@ -157,7 +157,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         n_entries += bs
         # Update train bar
         bar.desc = desc.format(ep, str_name, total_loss / n_entries)
-        bar.update(1)
+        bar.update(bs)
     bar.close()
     return total_loss / n_entries
 
@@ -270,8 +270,6 @@ if __name__ == '__main__':
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
-    tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
-               .format(n_train, 100 * n_train / n_total, n_valid, 100 * n_valid / n_total))
     # Get ids
     all_ids = dset.get_ids()
     rng.shuffle(all_ids)
@@ -283,21 +281,17 @@ if __name__ == '__main__':
     with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
     # Define dataset
-    train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
-    valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
-    # BELOW IS TEMPORARY!!! make loaders shorter since batch_sizes will not be constant after idx.
-    if args.pretrain_model.lower() == 'transformerxl':
-        for i in range(len(train_loader)):
-            if train_loader[i][0].shape[0] < args.batch_size:
-                idx = i
-                break
-        train_loader = train_loader[:idx]
-        for i in range(len(valid_loader)):
-            if valid_loader[i][0].shape[0] < args.batch_size:
-                idx = i
-                break
-        valid_loader = valid_loader[:idx]
-    # ABOVE IS TEMPORARY!!!
+    # TODO: double check if drop_last works properly
+    drop_last = True if args.pretrain_model.lower() == 'transformerxl' else False
+    train_loader = ECGBatchloader(dset, train_ids, batch_size=args.batch_size,
+                                  length=args.seq_length, drop_last=drop_last)
+    valid_loader = ECGBatchloader(dset, valid_ids, batch_size=args.batch_size,
+                                  length=args.seq_length, drop_last=drop_last)
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_train, 100 * n_train / n_total, len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
+    tqdm.write("Done!")
 
     # Get number of batches
     tqdm.write("Done!")

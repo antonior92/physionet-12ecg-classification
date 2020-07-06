@@ -114,7 +114,7 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
         n_entries += bs
         # Update train bar
         train_bar.desc = train_desc.format(ep, total_loss / n_entries)
-        train_bar.update(1)
+        train_bar.update(bs)
     train_bar.close()
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
@@ -157,7 +157,7 @@ def evaluate(ep, model, valid_loader, out_layer, device):
             n_entries += bs
             # Print result
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
-            eval_bar.update(1)
+            eval_bar.update(bs)
     eval_bar.close()
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
@@ -346,16 +346,12 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
-    # Define dataset
     train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size, length=args.seq_length)
     valid_loader = ECGBatchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
-    # Get number of batches
-    n_train_batches = len(train_loader)
-    n_valid_batches = len(valid_loader)
-    tqdm.write("\t train:  {:d} ({:2.2f}\%) samples divided into {:d} batches"
-               .format(n_train, 100 * n_train / n_total, n_train_batches)),
-    tqdm.write("\t valid:  {:d} ({:2.2f}\%) samples divided into {:d} batches"
-               .format(n_valid, 100 * n_valid / n_total, n_valid_batches))
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_train, 100 * n_train / n_total, len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
