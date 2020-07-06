@@ -5,22 +5,24 @@ import torch.nn as nn
 import argparse
 import random
 import pandas as pd
-from warnings import warn
+import numpy as np
+import sys
+sys.path.insert(1,os.getcwd())
 from data import *
+from warnings import warn
 from tqdm import tqdm
 from metrics import get_metrics
 from output_layer import OutputLayer, collapse
 
 os.chdir('../')
 sys.path.append(os.getcwd())
-
 from train import train, evaluate
+os.chdir(sys.path[1])
 
 
 # get the model
 def get_model(config, pretrain_stage_config, pretrain_stage_ckpt):
-    # get simple classifier
-    clf = EvalClassifier(config, len(CLASSES))
+   #moved get simple classifier from here
 
     # get pretraining model
     if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
@@ -32,6 +34,9 @@ def get_model(config, pretrain_stage_config, pretrain_stage_ckpt):
     if pretrain_stage_ckpt is not None:
         pretrained.load_state_dict(pretrain_stage_ckpt['model'])
     ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
+
+    # get simple classifier
+    clf = EvalClassifier(config, len(CLASSES))
 
     # combine model
     model = nn.Sequential(ptrmdl, clf)
@@ -49,6 +54,11 @@ class EvalClassifier(nn.Module):
     def __init__(self, args, n_classes):
         super(EvalClassifier, self).__init__()
         """TODO: Define here the network layers and parameters"""
+        #self.change_shape = np.reshape((args['batch_size'],-1))
+        self.fc1 = nn.Linear(in_features = int(args['pretrain_output_size']*args['seq_length']/config_dict_pretrain_stage['steps_concat']),
+             out_features = 128)
+        self.fc2 = nn.Linear(in_features = 128,out_features = 32)
+        self.fc3 = nn.Linear(in_features = 32, out_features = n_classes)
 
 
 
@@ -64,7 +74,12 @@ class EvalClassifier(nn.Module):
         so you need to flatten the incoming tensor and then push it through the FF netowrk. Flattening can be done
         similar to the last stage in the ResNet (have a look there with the view method).
         """
-
+        
+        src = src.reshape(config_dict_pretrain_stage['batch_size'],-1)
+        src = nn.functional.relu(self.fc1(src))
+        src = nn.functional.relu(self.fc2(src))
+        src = self.fc3(src)
+        
         # has to be changed
         out = src
 
