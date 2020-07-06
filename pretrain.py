@@ -1,4 +1,5 @@
 import json
+import torch
 import argparse
 import datetime
 import pandas as pd
@@ -8,6 +9,92 @@ from tqdm import tqdm
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import random
+import math
+
+from data.ecg_dataloader import ECGBatchloader
+
+
+class PretrainedRNNBlock(nn.Module):
+    """Get reusable part from MyRNN and return new model. Include Linear block with the given output_size."""
+
+    def __init__(self, pretrained, output_size, freeze=False):
+        super(PretrainedRNNBlock, self).__init__()
+        self.rnn = pretrained._modules['rnn']
+        if freeze:
+            for param in self.rnn.parameters():
+                param.requires_grad = False
+        self.linear = nn.Linear(self.rnn.hidden_size, output_size)
+
+    def forward(self, inp):
+        o1, _ = self.rnn(inp.transpose(1, 2))
+        o2 = self.linear(o1)
+        return o2.transpose(1, 2)
+
+
+class MyRNN(nn.Module):
+    """My RNN"""
+
+    def __init__(self, args):
+        super(MyRNN, self).__init__()
+        N_LEADS = 12
+        self.rnn = getattr(nn, args['pretrain_model'].upper())(N_LEADS, args['hidden_size_rnn'], args['num_layers'],
+                                                               dropout=args['dropout'], batch_first=True)
+        self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
+        self.k_steps_ahead = args['k_steps_ahead']
+
+    def forward(self, inp):
+        o1, _ = self.rnn(inp.transpose(1, 2))
+        o2 = self.linear(o1)
+        return o2.transpose(1, 2)
+
+    def get_pretrained(self, output_size, freeze=False):
+        return PretrainedRNNBlock(self, output_size, freeze)
+
+    def get_input_and_targets(self, traces):
+        max_steps_ahead = max(self.k_steps_ahead)
+        inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
+        n = inp.size(2)
+        target = torch.cat([traces[:, :, k:k + n] for k in self.k_steps_ahead], dim=1)
+        return inp, target
+
+
+class PretrainedTransformerBlock(nn.Module):
+    """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
+
+    def __init__(self, pretrained, output_size,  freeze=False):
+        super(PretrainedTransformerBlock, self).__init__()
+        self.N_LEADS = 12
+        self.emb_size = pretrained._modules['decoder'].out_features
+        self.pos_encoder = pretrained._modules['pos_encoder']
+        self.transformer_encoder = pretrained._modules['transformer_encoder']
+
+        if freeze:
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
+            for param in self.pos_encoder.parameters():
+                param.requires_grad = False
+            for param in self.transformer_encoder.parameters():
+                param.requires_grad = False
+
+        # self.encoder.out_features is also the output feature size of the transformer
+        self.decoder = nn.Linear(self.emb_size, output_size)
+        self.steps_concat = pretrained.steps_concat
+
+    def forward(self, src):
+        batch_size, n_feature, seq_len = src.shape
+        # concatenate neighboring samples in feature channel
+        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
+        # put in the right shape for transformer
+        # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
+        src2 = src1.transpose(0, 1)
+        # process data (no mask in transformer used)
+        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
+        src3 = self.pos_encoder(src2)
+        out1 = self.transformer_encoder(src3)
+        out2 = self.decoder(out1)
+        # permute to have the same dimensions as in the input
+        output = out2.permute(1, 2, 0)
+        return output
 
 from models_pretrain.transformer_pretrain import MyTransformer
 from models_pretrain.rnn_pretrain import MyRNN
@@ -36,7 +123,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     # loop over all batches
     for i, batch in enumerate(loader):
         # Send to device
-        traces, _, ids, sub_ids = batch
+        traces, ids, sub_ids = batch
         traces = traces.to(device=device)
         # create model input and targets
         inp, target = model.get_input_and_targets(traces)
@@ -70,7 +157,7 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         n_entries += bs
         # Update train bar
         bar.desc = desc.format(ep, str_name, total_loss / n_entries)
-        bar.update(1)
+        bar.update(bs)
     bar.close()
     return total_loss / n_entries
 
@@ -183,8 +270,6 @@ if __name__ == '__main__':
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
-    tqdm.write("\t train: {:d} ({:2.2f}\%) samples, valid: {:d}({:2.2f}\%) samples"
-               .format(n_train, 100 * n_train / n_total, n_valid, 100 * n_valid / n_total))
     # Get ids
     all_ids = dset.get_ids()
     rng.shuffle(all_ids)
@@ -196,21 +281,17 @@ if __name__ == '__main__':
     with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
     # Define dataset
-    train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
-    valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
-    # BELOW IS TEMPORARY!!! make loaders shorter since batch_sizes will not be constant after idx.
-    if args.pretrain_model.lower() == 'transformerxl':
-        for i in range(len(train_loader)):
-            if train_loader[i][0].shape[0] < args.batch_size:
-                idx = i
-                break
-        train_loader = train_loader[:idx]
-        for i in range(len(valid_loader)):
-            if valid_loader[i][0].shape[0] < args.batch_size:
-                idx = i
-                break
-        valid_loader = valid_loader[:idx]
-    # ABOVE IS TEMPORARY!!!
+    # TODO: double check if drop_last works properly
+    drop_last = True if args.pretrain_model.lower() == 'transformerxl' else False
+    train_loader = ECGBatchloader(dset, train_ids, batch_size=args.batch_size,
+                                  length=args.seq_length, drop_last=drop_last)
+    valid_loader = ECGBatchloader(dset, valid_ids, batch_size=args.batch_size,
+                                  length=args.seq_length, drop_last=drop_last)
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_train, 100 * n_train / n_total, len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
+    tqdm.write("Done!")
 
     # Get number of batches
     tqdm.write("Done!")

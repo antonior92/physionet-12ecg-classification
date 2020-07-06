@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import torch
 import datetime
 import random
 import pandas as pd
@@ -8,13 +9,35 @@ import torch.nn as nn
 from warnings import warn
 from data import *
 from tqdm import tqdm
+
+from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
-from metrics import get_metrics
-from output_layer import OutputLayer, collapse, get_collapse_fun
+from output_layer import OutputLayer, collapse, DxClasses
+from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
+                                  compute_challenge_metric, load_weights)
 
 
-def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
+class GetMetrics(object):
+
+    def __init__(self, weights, normal_index=None):
+        """Compute metrics"""
+        self.weights = weights
+        self.normal_index = normal_index
+
+    def __call__(self, y_true, y_pred, y_score):
+        """Return dictionary with relevant metrics"""
+        auroc, auprc = compute_auc(y_true, y_score)
+        accuracy = compute_accuracy(y_true, y_pred)
+        f_measure = compute_f_measure(y_true, y_pred)
+        f_beta, g_beta = compute_beta_measures(y_true, y_pred, beta=2)
+        challenge_metric = compute_challenge_metric(self.weights, y_true, y_pred, self.normal_index)
+        geometric_mean = np.sqrt(f_beta*g_beta)
+        return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta,
+                'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
+
+
+def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
@@ -29,9 +52,9 @@ def get_model(config, pretrain_stage_config=None, pretrain_stage_ckpt=None):
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
              + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
     # Get resnet
-    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
-                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
-                      n_classes=len(CLASSES), kernel_size=config['kernel_size'],
+    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
+                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
+                      n_classes=n_classes, kernel_size=config['kernel_size'],
                       dropout_rate=config['dropout_rate'])
     # Get final prediction stage
     if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
@@ -91,7 +114,7 @@ def train(ep, model, optimizer, train_loader, out_layer, device):
         n_entries += bs
         # Update train bar
         train_bar.desc = train_desc.format(ep, total_loss / n_entries)
-        train_bar.update(1)
+        train_bar.update(bs)
     train_bar.close()
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
@@ -134,7 +157,7 @@ def evaluate(ep, model, valid_loader, out_layer, device):
             n_entries += bs
             # Print result
             eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
-            eval_bar.update(1)
+            eval_bar.update(bs)
     eval_bar.close()
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
@@ -172,10 +195,6 @@ if __name__ == '__main__':
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
-    config_parser.add_argument('--finetuning', action='store_true',
-                               help='when there is a pre-trained model, by default it '
-                                    'freezes the weights of the pre-trained model, but with this option'
-                                    'these weight will be fine-tunned during training.')
     # Model parameters
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
@@ -195,11 +214,24 @@ if __name__ == '__main__':
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
+    config_parser.add_argument('--finetuning',  action='store_true',
+                                help='when there is a pre-trained model, by default it '
+                                     'freezes the weights of the pre-trained model, but with this option'
+                                     'these weight will be fine-tunned during training.')
+    config_parser.add_argument('--train_classes',  choices=['dset', 'scored'], default='scored_classes',
+                                help='what classes are to be used during training.')
+    config_parser.add_argument('--valid_classes',  choices=['dset', 'scored'], default='scored_classes',
+                                help='what classes are to be used during evaluation.')
+    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'],
+                                help='what is the type used for the output layer. Options are '
+                                     '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
                             help='input folder.')
+    sys_parser.add_argument('--dx', type=str, default='./dx',
+                            help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
     sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/output_prestage_transformer_old',
@@ -253,6 +285,9 @@ if __name__ == '__main__':
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    tqdm.write("Done!")
+
+    tqdm.write("Define train and validation splits...")
     all_ids = dset.get_ids()
     set_all_ids = set(all_ids)
     # Get pretrained ids
@@ -276,30 +311,57 @@ if __name__ == '__main__':
         f.write(','.join(train_ids))
     with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
-    # Define dataset
-    train_loader = get_batchloader(dset, train_ids, batch_size=args.batch_size, length=args.seq_length)
-    valid_loader = get_batchloader(dset, valid_ids, batch_size=args.batch_size, length=args.seq_length)
-    # Get number of batches
-    n_train_batches = len(train_loader)
-    n_valid_batches = len(valid_loader)
-    tqdm.write("\t train:  {:d} ({:2.2f}\%) samples divided into {:d} batches"
-               .format(n_train, 100 * n_train / n_total, n_train_batches)),
-    tqdm.write("\t valid:  {:d} ({:2.2f}\%) samples divided into {:d} batches"
-               .format(n_valid, 100 * n_valid / n_total, n_valid_batches))
+    tqdm.write("Done!")
+
+    tqdm.write("Define output layer...")
+    # Get all classes in the dataset
+    dset_classes = dset.get_classes()
+    # Get all classes to be scored
+    df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
+    scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
+    # Get training classes
+    train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
+    valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
+    # Get mutually exclusive entries
+    if args.outlayer == 'sigmoid-and-softmax':
+        with open(os.path.join(settings.dx, 'mutually_exclusivity.txt'), 'r') as file:
+            mutually_exclusive = [line.split(',') for line in file.read().split('\n')]
+        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
+            null_class = file.read()
+        dx = DxClasses(train_classes, mutually_exclusive, null_class)
+    if args.outlayer == 'softmax':
+        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
+            null_class = file.read()
+        mutually_exclusive = [list(set(train_classes).difference([null_class]))]
+        dx = DxClasses(train_classes, mutually_exclusive, null_class)
+    else:
+        dx = DxClasses(train_classes)
+    out_layer = OutputLayer(args.batch_size, dx, device)
+    tqdm.write("Done!")
+
+    tqdm.write("Define metrics...")
+    weights = load_weights(os.path.join(settings.dx, 'weights.csv'), valid_classes)
+    NORMAL = '426783006'
+    get_metrics = GetMetrics(weights, valid_classes.index(NORMAL))
+    tqdm.write("Done!")
+
+    tqdm.write("Get dataloaders...")
+    train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    valid_loader = ECGBatchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_train, 100 * n_train / n_total, len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
-    # Get all targets
-    targets = np.stack([s['output'] for s in dset.use_only_header(True)[train_ids]])
-    targets_bin = multiclass_to_binaryclass(targets)
-    threshold = targets_bin.sum(axis=0) / targets_bin.shape[0]
+    threshold = dx.compute_threshold(dset, train_ids)
     tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = AF:{:.2f},I-AVB:{:.2f},RBBB:{:.2f},LBBB:{:.2f},PAC:{:.2f},PVC:{:.2f},STD:{:.2f},STE:{:.2f}"
-               .format(*threshold))
+    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    model = get_model(vars(args), config_dict_pretrain_stage, ckpt_pretrain_stage)
+    model = get_model(vars(args), len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)
     model.to(device=device)
     tqdm.write("Done!")
 
@@ -311,10 +373,6 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=args.lr_factor)
     tqdm.write("Done!")
 
-    tqdm.write("Define loss...")
-    out_layer = OutputLayer(args.batch_size, mututally_exclusive, device)
-    tqdm.write("Done!")
-
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
     best_geom_mean = -np.Inf
     # run over all epochs
@@ -322,28 +380,34 @@ if __name__ == '__main__':
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
-        y_true = multiclass_to_binaryclass(all_targets)
         # Collapse entries with the same id:
-        unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(vars(args)))
+        unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
+        # Get zero one prediction
+        y_pred_aux = dx.apply_threshold(y_score, threshold)
+        y_pred = dx.target_to_binaryclass(y_pred_aux)
+        y_pred = dx.reorganize(y_pred, valid_classes, prob=False)
+        y_score = dx.reorganize(y_score, valid_classes, prob=True)
+        # Get metrics
+        y_true = dx.target_to_binaryclass(all_targets)
         _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-        # Get labels
-        y_pred = y_score > threshold
+        y_true = dx.reorganize(y_true, valid_classes)
+        metrics = get_metrics(y_true, y_pred, y_score)
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        metrics = get_metrics(y_true, y_pred)
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tGeom Mean: {:.3f}' \
+                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
             .format(ep, train_loss, valid_loss, learning_rate,
                     metrics['f_beta'], metrics['g_beta'],
-                    metrics['geom_mean'])
+                    metrics['challenge_metric'])
         tqdm.write(message)
         # Save history
         history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
                                   "lr": learning_rate, "f_beta": metrics['f_beta'],
-                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean']},
+                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean'],
+                                  'challenge_metric': metrics['challenge_metric']},
                                  ignore_index=True)
         history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
