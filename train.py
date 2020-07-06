@@ -52,17 +52,16 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
              + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
     # Get resnet
-    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
-                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_lengh'])),
-                      n_classes=n_classes, kernel_size=config['kernel_size'],
-                      dropout_rate=config['dropout_rate'])
+    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
+                      kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
     # Get final prediction stage
     if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
-        pred_stage = RNNPredictionStage(config, len(CLASSES))
+        pred_stage = RNNPredictionStage(config, n_classes)
     else:
         n_filters_last = config['net_filter_size'][-1]
         n_samples_last = config['net_seq_length'][-1]
-        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last*n_samples_last, n_classes=len(CLASSES))
+        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last*n_samples_last, n_classes=n_classes)
     # get pretrain model if available and combine all models
     if pretrain_stage_config is None:
         # combine the models
@@ -222,7 +221,7 @@ if __name__ == '__main__':
                                 help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes',  choices=['dset', 'scored'], default='scored_classes',
                                 help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'],
+    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
                                 help='what is the type used for the output layer. Options are '
                                      '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
