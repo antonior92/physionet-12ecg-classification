@@ -40,10 +40,15 @@ class GetMetrics(object):
 def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
+    # Define pretrain output sequence length
+    if pretrain_stage_config is not None and pretrain_stage_config['pretrain_model'].lower() == 'transformer':
+        seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
+    else:
+        seq_len = config['seq_length']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
     removed_blocks = 0
     for l in config['net_seq_length']:
-        if l > config['seq_length']:
+        if l > seq_len:
             del config['net_seq_length'][0]
             del config['net_filter_size'][0]
             removed_blocks += 1
@@ -52,7 +57,7 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
              + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
     # Get resnet
-    resnet = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
+    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
                       kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
     # Get final prediction stage
@@ -189,8 +194,6 @@ if __name__ == '__main__':
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
                                help='reducing factor for the lr in a plateeu (default: 0.1)')
     # Pretrain Model parameters
-    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
-                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default)')
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
@@ -207,7 +210,7 @@ if __name__ == '__main__':
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
     # Final Predictor parameters
-    config_parser.add_argument('--pred_stage_type', type=str, default='gru',
+    config_parser.add_argument('--pred_stage_type', type=str, default='mean',
                                help='type of prediction stage model: LSTM, GRU (default), RNN, mean, max.')
     config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
                                help='number of rnn layers in prediction stage (default: 2).')
