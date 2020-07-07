@@ -116,13 +116,13 @@ if __name__ == '__main__':
     config_parser.add_argument('--k_steps_ahead', nargs='+', type=int, default=[10, 20, 25, 50, 75, 90, 100],
                                help='Try to predict k steps ahead')
     # parameters for transformer network
-    config_parser.add_argument('--num_heads', type=int, default=2,
+    config_parser.add_argument('--num_heads', type=int, default=4,
                                help="Number of attention heads. Default is 4.")
-    config_parser.add_argument('--num_trans_layers', type=int, default=2,
+    config_parser.add_argument('--num_trans_layers', type=int, default=3,
                                help="Number of transformer blocks. Default is 4.")
-    config_parser.add_argument('--dim_model', type=int, default=10,
+    config_parser.add_argument('--dim_model', type=int, default=256,
                                help="Internal dimension of transformer. Default is 512.")
-    config_parser.add_argument('--dim_inner', type=int, default=10,
+    config_parser.add_argument('--dim_inner', type=int, default=768,
                                help="Size of the FF network in the transformer. Default is 2048.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input. Default is 4')
@@ -134,7 +134,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--init_std', type=float, default=0.02,
                                help='standard deviation of normal initialization. Default is 0.02.')
     # training types for transformer
-    config_parser.add_argument('--trans_train_type', type=str, default='masking',
+    config_parser.add_argument('--trans_train_type', type=str, default='flipping',
                                help='Type of transformer training type: masking (default), flipping')
     config_parser.add_argument('--train_noise_std', type=float, default=0.0,
                                help='Standard deviation of Gaussian noise on transformer input for training. '
@@ -143,8 +143,6 @@ if __name__ == '__main__':
                                help="Number of consecutive samples masked for attention. Default is 8.")
     config_parser.add_argument('--perc_masked_samp', type=int, default=0.15,
                                help="Percentage of total masked samples. Default is 0.15.")
-    config_parser.add_argument('--discrete_input', type=bool, default=True,
-                               help="Input to model discrete or continuous. Default is False.")
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)

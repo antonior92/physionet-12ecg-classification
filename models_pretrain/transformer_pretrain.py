@@ -1,9 +1,8 @@
 import math
-import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from models_pretrain.masks_transformer import *
-
+import matplotlib.pyplot as plt
 
 class PretrainedTransformerBlock(nn.Module):
     """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
@@ -103,9 +102,8 @@ class MyTransformer(nn.Module):
         self.train_noise_std = args['train_noise_std']
         self.num_masked_samples = args['num_masked_samples']
         self.perc_masked_samples = args['perc_masked_samp']
-        self.discrete_input = args['discrete_input']
-        self.seq_len = args['seq_length']
 
+        self.seq_len = args['seq_length']
         self.N_LEADS = 12
         self.dim_concat = int(self.N_LEADS * args['steps_concat'])
         self.dim_model = args["dim_model"]
@@ -118,8 +116,8 @@ class MyTransformer(nn.Module):
         if self.trans_train_type.lower() == 'masking':
             self.decoder = nn.Linear(self.dim_model, self.dim_concat)
         elif self.trans_train_type.lower() == 'flipping':
-            self.decoder1 = nn.Linear(self.dim_model, self.N_LEADS)
-            self.decoder2 = nn.Linear(self.seq_len//self.steps_concat, 4)
+            self.decoder = nn.Linear(self.dim_model, self.N_LEADS)
+            self.decoder_class = nn.Linear(self.seq_len//self.steps_concat, 4)
 
     def forward(self, src, dummyvar):
         batch_size, n_feature, seq_len = src.shape
@@ -150,9 +148,9 @@ class MyTransformer(nn.Module):
             # Put in the right shape for transformer
             output = out3.transpose(1, 2)
         elif self.trans_train_type.lower() == 'flipping':
-            out2 = self.decoder1(out1)
+            out2 = self.decoder(out1)
             out3 = out2.permute(1, 2, 0)
-            out4 = self.decoder2(out3)
+            out4 = self.decoder_class(out3)
             output = out4.view(-1, out4.size(-1))
 
         return output, []
@@ -161,17 +159,15 @@ class MyTransformer(nn.Module):
         return PretrainedTransformerBlock(self, output_size, freeze)
 
     def get_input_and_targets(self, traces):
-        if self.discrete_input:
-            # if discrete input then make dtype=torch.float16 since all data are 16 bit.
-            traces = traces.half()
-
         # CASE: Masking
         if self.trans_train_type.lower() == 'masking':
-            noise = torch.normal(torch.zeros(traces.shape), self.train_noise_std * torch.ones(traces.shape))
+            # noise on input
+            if self.train_noise_std > 0:
+                noise = torch.normal(torch.zeros(traces.shape), self.train_noise_std * torch.ones(traces.shape))
+                inp = traces + noise.to(device=traces.device)
+            else:
+                inp = traces
             # return input, target
-            inp = traces + noise
-            if self.discrete_input:
-                inp.half()
             target = traces
             return inp, target
 
@@ -212,4 +208,4 @@ class MyTransformer(nn.Module):
                 elif flip_nr == 3:
                     inp[i, j, :] = f3(traces[i, j, :])
 
-            return inp, target.view(-1)
+            return inp, target.view(-1).to(device=inp.device)
