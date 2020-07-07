@@ -104,6 +104,7 @@ class MyTransformer(nn.Module):
         self.num_masked_samples = args['num_masked_samples']
         self.perc_masked_samples = args['perc_masked_samp']
         self.discrete_input = args['discrete_input']
+        self.seq_len = args['seq_length']
 
         self.N_LEADS = 12
         self.dim_concat = int(self.N_LEADS * args['steps_concat'])
@@ -117,7 +118,8 @@ class MyTransformer(nn.Module):
         if self.trans_train_type.lower() == 'masking':
             self.decoder = nn.Linear(self.dim_model, self.dim_concat)
         elif self.trans_train_type.lower() == 'flipping':
-            self.decoder = nn.Linear(self.dim_model, 4)
+            self.decoder1 = nn.Linear(self.dim_model, self.N_LEADS)
+            self.decoder2 = nn.Linear(self.seq_len//self.steps_concat, 4)
 
     def forward(self, src, dummyvar):
         batch_size, n_feature, seq_len = src.shape
@@ -129,12 +131,11 @@ class MyTransformer(nn.Module):
         # generate mask
         if self.trans_train_type.lower() == 'masking':
             # generate random mask
-            mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples,
-                                                 self.perc_masked_samples).to(next(self.parameters()).device)
+            self.mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples,
+                                                      self.perc_masked_samples).to(next(self.parameters()).device)
         elif self.trans_train_type.lower() == 'flipping':
             # no mask needed
-            mask = torch.zeros(len(src2), len(src2)).to(next(self.parameters()).device)
-        self.mask = mask
+            self.mask = torch.zeros(len(src2), len(src2)).to(next(self.parameters()).device)
 
         # process data
         src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
@@ -149,8 +150,10 @@ class MyTransformer(nn.Module):
             # Put in the right shape for transformer
             output = out3.transpose(1, 2)
         elif self.trans_train_type.lower() == 'flipping':
-            out2 = self.decoder(out1)
-            output = out2   ####### Here a softmax/sigmoid?
+            out2 = self.decoder1(out1)
+            out3 = out2.permute(1, 2, 0)
+            out4 = self.decoder2(out3)
+            output = out4.view(-1, out4.size(-1))
 
         return output, []
 
@@ -164,9 +167,11 @@ class MyTransformer(nn.Module):
 
         # CASE: Masking
         if self.trans_train_type.lower() == 'masking':
-            noise = torch.normal(torch.zeros_like(traces), self.train_noise_std * torch.ones_like(traces))
+            noise = torch.normal(torch.zeros(traces.shape), self.train_noise_std * torch.ones(traces.shape))
             # return input, target
             inp = traces + noise
+            if self.discrete_input:
+                inp.half()
             target = traces
             return inp, target
 
@@ -207,4 +212,4 @@ class MyTransformer(nn.Module):
                 elif flip_nr == 3:
                     inp[i, j, :] = f3(traces[i, j, :])
 
-            return inp, target
+            return inp, target.view(-1)

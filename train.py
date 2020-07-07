@@ -227,7 +227,7 @@ if __name__ == '__main__':
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
-    sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
+    sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
                             help='Path to folder containing class information.')

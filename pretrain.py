@@ -79,8 +79,8 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--pretrain_model', type=str, default='transformer',
-                               help='type of pretraining net: LSTM, GRU, RNN, Transformer, Transformer XL (default)')
+    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
+                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default), Transformer XL')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--epochs', type=int, default=125,
@@ -98,9 +98,9 @@ if __name__ == '__main__':
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
                                default=[40, 75, 100],
-                               help='milestones for lr scheduler (default: [100, 200])')
+                               help='milestones for lr scheduler (default: [40, 75, 100])')
     config_parser.add_argument("--lr_factor", type=float, default=0.1,
-                               help='reducing factor for the lr in a plateeu (default: 0.1)')
+                               help='reducing factor for the lr in a plateau (default: 0.1)')
     config_parser.add_argument('--dropout', type=float, default=0.2,
                                help='dropout rate (default: 0.2).')
     config_parser.add_argument('--clip_value', type=float, default=1.0,
@@ -117,13 +117,13 @@ if __name__ == '__main__':
                                help='Try to predict k steps ahead')
     # parameters for transformer network
     config_parser.add_argument('--num_heads', type=int, default=2,
-                               help="Number of attention heads. Default is 5.")
+                               help="Number of attention heads. Default is 4.")
     config_parser.add_argument('--num_trans_layers', type=int, default=2,
-                               help="Number of transformer blocks. Default is 2.")
+                               help="Number of transformer blocks. Default is 4.")
     config_parser.add_argument('--dim_model', type=int, default=10,
-                               help="Internal dimension of transformer. Default is 50.")
+                               help="Internal dimension of transformer. Default is 512.")
     config_parser.add_argument('--dim_inner', type=int, default=10,
-                               help="Size of the FF network in the transformer. Default is 50.")
+                               help="Size of the FF network in the transformer. Default is 2048.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input. Default is 4')
     # additional parameters for transformer xl
@@ -132,9 +132,9 @@ if __name__ == '__main__':
     config_parser.add_argument('--dropout_attn', type=float, default=0.2,
                                help='attention mechanism dropout rate. Default is 0.2.')
     config_parser.add_argument('--init_std', type=float, default=0.02,
-                               help='standard devition of normal initialization. Default is 0.02.')
+                               help='standard deviation of normal initialization. Default is 0.02.')
     # training types for transformer
-    config_parser.add_argument('--trans_train_type', type=str, default='flipping',
+    config_parser.add_argument('--trans_train_type', type=str, default='masking',
                                help='Type of transformer training type: masking (default), flipping')
     config_parser.add_argument('--train_noise_std', type=float, default=0.0,
                                help='Standard deviation of Gaussian noise on transformer input for training. '
@@ -143,12 +143,12 @@ if __name__ == '__main__':
                                help="Number of consecutive samples masked for attention. Default is 8.")
     config_parser.add_argument('--perc_masked_samp', type=int, default=0.15,
                                help="Percentage of total masked samples. Default is 0.15.")
-    config_parser.add_argument('--discrete_input', type=bool, default=False,
+    config_parser.add_argument('--discrete_input', type=bool, default=True,
                                help="Input to model discrete or continuous. Default is False.")
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
-    sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
+    sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
@@ -215,9 +215,6 @@ if __name__ == '__main__':
                .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
     tqdm.write("Done!")
 
-    # Get number of batches
-    tqdm.write("Done!")
-
     tqdm.write("Define model...")
     if args.pretrain_model.lower() == 'transformerxl':
         model = MyTransformerXL(vars(args))
@@ -238,7 +235,10 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define loss...")
-    loss = nn.MSELoss(reduction='sum')
+    if args.trans_train_type.lower() == 'masking':
+        loss = nn.MSELoss(reduction='sum')
+    elif args.trans_train_type.lower() == 'flipping':
+        loss = nn.CrossEntropyLoss()  # reduction='sum'
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", ])
