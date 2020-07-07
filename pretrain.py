@@ -9,93 +9,8 @@ from tqdm import tqdm
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 import random
-import math
 
 from data.ecg_dataloader import ECGBatchloader
-
-
-class PretrainedRNNBlock(nn.Module):
-    """Get reusable part from MyRNN and return new model. Include Linear block with the given output_size."""
-
-    def __init__(self, pretrained, output_size, freeze=False):
-        super(PretrainedRNNBlock, self).__init__()
-        self.rnn = pretrained._modules['rnn']
-        if freeze:
-            for param in self.rnn.parameters():
-                param.requires_grad = False
-        self.linear = nn.Linear(self.rnn.hidden_size, output_size)
-
-    def forward(self, inp):
-        o1, _ = self.rnn(inp.transpose(1, 2))
-        o2 = self.linear(o1)
-        return o2.transpose(1, 2)
-
-
-class MyRNN(nn.Module):
-    """My RNN"""
-
-    def __init__(self, args):
-        super(MyRNN, self).__init__()
-        N_LEADS = 12
-        self.rnn = getattr(nn, args['pretrain_model'].upper())(N_LEADS, args['hidden_size_rnn'], args['num_layers'],
-                                                               dropout=args['dropout'], batch_first=True)
-        self.linear = nn.Linear(args['hidden_size_rnn'], N_LEADS * len(args['k_steps_ahead']))
-        self.k_steps_ahead = args['k_steps_ahead']
-
-    def forward(self, inp):
-        o1, _ = self.rnn(inp.transpose(1, 2))
-        o2 = self.linear(o1)
-        return o2.transpose(1, 2)
-
-    def get_pretrained(self, output_size, freeze=False):
-        return PretrainedRNNBlock(self, output_size, freeze)
-
-    def get_input_and_targets(self, traces):
-        max_steps_ahead = max(self.k_steps_ahead)
-        inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
-        n = inp.size(2)
-        target = torch.cat([traces[:, :, k:k + n] for k in self.k_steps_ahead], dim=1)
-        return inp, target
-
-
-class PretrainedTransformerBlock(nn.Module):
-    """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
-
-    def __init__(self, pretrained, output_size,  freeze=False):
-        super(PretrainedTransformerBlock, self).__init__()
-        self.N_LEADS = 12
-        self.emb_size = pretrained._modules['decoder'].out_features
-        self.pos_encoder = pretrained._modules['pos_encoder']
-        self.transformer_encoder = pretrained._modules['transformer_encoder']
-
-        if freeze:
-            for param in self.transformer_encoder.parameters():
-                param.requires_grad = False
-            for param in self.pos_encoder.parameters():
-                param.requires_grad = False
-            for param in self.transformer_encoder.parameters():
-                param.requires_grad = False
-
-        # self.encoder.out_features is also the output feature size of the transformer
-        self.decoder = nn.Linear(self.emb_size, output_size)
-        self.steps_concat = pretrained.steps_concat
-
-    def forward(self, src):
-        batch_size, n_feature, seq_len = src.shape
-        # concatenate neighboring samples in feature channel
-        src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
-        # put in the right shape for transformer
-        # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
-        src2 = src1.transpose(0, 1)
-        # process data (no mask in transformer used)
-        # src = self.encoder(src) * math.sqrt(self.N_LEADS)
-        src3 = self.pos_encoder(src2)
-        out1 = self.transformer_encoder(src3)
-        out2 = self.decoder(out1)
-        # permute to have the same dimensions as in the input
-        output = out2.permute(1, 2, 0)
-        return output
-
 from models_pretrain.transformer_pretrain import MyTransformer
 from models_pretrain.rnn_pretrain import MyRNN
 from models_pretrain.transformerxl_pretrain import MyTransformerXL
@@ -115,10 +30,9 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     mems = []
     if args.pretrain_model.lower() == 'transformerxl':
         param = next(model.parameters())
-        for i in range(args.num_trans_layers + 1):
-            # empty = torch.empty(0, dtype=param.dtype, device=param.device)
-            empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
-                                dtype=param.dtype, device=param.device, requires_grad=False)
+        empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
+                            dtype=param.dtype, device=param.device, requires_grad=False)
+        for _ in range(args.num_trans_layers + 1):
             mems.append(empty)
     # loop over all batches
     for i, batch in enumerate(loader):
@@ -134,8 +48,8 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
                 mask = (torch.tensor(sub_ids) != 0).float().to(device=param.device)
                 mask = mask[None, :, None]
                 mask = mask.repeat(args.mem_len, 1, args.dim_model)
-                for i in range(args.num_trans_layers + 1):
-                    mems[i] = mems[i] * mask
+                for j in range(args.num_trans_layers + 1):
+                    mems[j] = mems[j] * mask
         if train:
             # Reinitialize grad
             model.zero_grad()
@@ -173,7 +87,7 @@ if __name__ == '__main__':
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
-    config_parser.add_argument('--seq_length', type=int, default=1024,
+    config_parser.add_argument('--seq_length', type=int, default=4096,
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
@@ -210,12 +124,8 @@ if __name__ == '__main__':
                                help="Internal dimension of transformer. Default is 50.")
     config_parser.add_argument('--dim_inner', type=int, default=10,
                                help="Size of the FF network in the transformer. Default is 50.")
-    config_parser.add_argument('--num_masked_samples', type=int, default=8,
-                               help="Number of consecutive samples masked for attention. Default is 8.")
-    config_parser.add_argument('--perc_masked_samp', type=int, default=0.15,
-                               help="Percentage of total masked samples. Default is 0.15.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
-                               help='number of concatenated time steps for model input (default: 4)')
+                               help='number of concatenated time steps for model input. Default is 4')
     # additional parameters for transformer xl
     config_parser.add_argument('--mem_len', type=int, default=100,
                                help="Memory length of transformer xl. Default is 1000.")
@@ -223,6 +133,18 @@ if __name__ == '__main__':
                                help='attention mechanism dropout rate. Default is 0.2.')
     config_parser.add_argument('--init_std', type=float, default=0.02,
                                help='standard devition of normal initialization. Default is 0.02.')
+    # training types for transformer
+    config_parser.add_argument('--trans_train_type', type=str, default='flipping',
+                               help='Type of transformer training type: masking (default), flipping')
+    config_parser.add_argument('--train_noise_std', type=float, default=0.0,
+                               help='Standard deviation of Gaussian noise on transformer input for training. '
+                                    'Default is 0.1')
+    config_parser.add_argument('--num_masked_samples', type=int, default=8,
+                               help="Number of consecutive samples masked for attention. Default is 8.")
+    config_parser.add_argument('--perc_masked_samp', type=int, default=0.15,
+                               help="Percentage of total masked samples. Default is 0.15.")
+    config_parser.add_argument('--discrete_input', type=bool, default=False,
+                               help="Input to model discrete or continuous. Default is False.")
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)

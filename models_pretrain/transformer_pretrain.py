@@ -24,8 +24,6 @@ class PretrainedTransformerBlock(nn.Module):
                 param.requires_grad = False
             for param in self.transformer_encoder.parameters():
                 param.requires_grad = False
-            for param in self.transformer_encoder.parameters():
-                param.requires_grad = False
 
         # self.encoder.out_features is also the output feature size of the transformer
         self.decoder = nn.Linear(self.dim_model, output_size)
@@ -101,9 +99,13 @@ class MyTransformer(nn.Module):
 
     def __init__(self, args):
         super(MyTransformer, self).__init__()
-        self.N_LEADS = 12
+        self.trans_train_type = args['trans_train_type']
+        self.train_noise_std = args['train_noise_std']
         self.num_masked_samples = args['num_masked_samples']
         self.perc_masked_samples = args['perc_masked_samp']
+        self.discrete_input = args['discrete_input']
+
+        self.N_LEADS = 12
         self.dim_concat = int(self.N_LEADS * args['steps_concat'])
         self.dim_model = args["dim_model"]
         self.steps_concat = args['steps_concat']
@@ -112,7 +114,10 @@ class MyTransformer(nn.Module):
         self.pos_encoder = PositionalEncoding(self.dim_model, args['dropout'])
         encoder_layers = TransformerEncoderLayer(self.dim_model, args['num_heads'], args['dim_inner'], args['dropout'])
         self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
-        self.decoder = nn.Linear(self.dim_model, self.dim_concat)
+        if self.trans_train_type.lower() == 'masking':
+            self.decoder = nn.Linear(self.dim_model, self.dim_concat)
+        elif self.trans_train_type.lower() == 'flipping':
+            self.decoder = nn.Linear(self.dim_model, 4)
 
     def forward(self, src, dummyvar):
         batch_size, n_feature, seq_len = src.shape
@@ -121,27 +126,85 @@ class MyTransformer(nn.Module):
         # put in the right shape for transformer
         # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
         src2 = src1.transpose(0, 1)
-        # generate random mask
-        mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples,
-                                             self.perc_masked_samples).to(next(self.parameters()).device)
-        # generate triangular mask ('predict next sample').
+        # generate mask
+        if self.trans_train_type.lower() == 'masking':
+            # generate random mask
+            mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples,
+                                                 self.perc_masked_samples).to(next(self.parameters()).device)
+        elif self.trans_train_type.lower() == 'flipping':
+            # no mask needed
+            mask = torch.zeros(len(src2), len(src2)).to(next(self.parameters()).device)
         self.mask = mask
 
         # process data
         src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
         src4 = self.pos_encoder(src3)
         out1 = self.transformer_encoder(src4, self.mask)
-        out2 = self.decoder(out1)
 
-        # Go back to original, without neighboring samples concatenated
-        # out3.shape =  batch size, sequence length, n_feature
-        out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
-        # Put in the right shape for transformer
-        output = out3.transpose(1, 2)
+        if self.trans_train_type.lower() == 'masking':
+            out2 = self.decoder(out1)
+            # Go back to original, without neighboring samples concatenated
+            # out3.shape =  batch size, sequence length, n_feature
+            out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
+            # Put in the right shape for transformer
+            output = out3.transpose(1, 2)
+        elif self.trans_train_type.lower() == 'flipping':
+            out2 = self.decoder(out1)
+            output = out2   ####### Here a softmax/sigmoid?
+
         return output, []
 
     def get_pretrained(self, output_size, freeze=False):
         return PretrainedTransformerBlock(self, output_size, freeze)
 
     def get_input_and_targets(self, traces):
-        return traces, traces
+        if self.discrete_input:
+            # if discrete input then make dtype=torch.float16 since all data are 16 bit.
+            traces = traces.half()
+
+        # CASE: Masking
+        if self.trans_train_type.lower() == 'masking':
+            noise = torch.normal(torch.zeros_like(traces), self.train_noise_std * torch.ones_like(traces))
+            # return input, target
+            inp = traces + noise
+            target = traces
+            return inp, target
+
+        # CASE: Flipping
+        if self.trans_train_type.lower() == 'flipping':
+            """how is it flipped:
+            target==0: input stays the same (input)
+            target==1: mirror on x-axis (-1*input)
+            target==2: reverse/flip signal (input.flip(dim=-1))
+            target==3: mirror and reverser (-1*input.flip(dim=-1))
+            """
+            # parameter
+            n_fips = 4
+            batch_size = traces.shape[0]
+
+            # flipping function
+            f0 = lambda x: x
+            f1 = lambda x: -x
+            f2 = lambda x: x.flip(-1)
+            f3 = lambda x: -x.flip(-1)
+
+            # get targets
+            m = torch.distributions.categorical.Categorical(1 / n_fips * torch.ones(batch_size, self.N_LEADS, n_fips))
+            target = m.sample()
+
+            # flip input according to target
+            inp = traces
+            for flip_nr in range(n_fips):
+                idx = (target == flip_nr).nonzero()
+                i = idx[:, 0]
+                j = idx[:, 1]
+                if flip_nr == 0:
+                    inp[i, j, :] = f0(traces[i, j, :])
+                elif flip_nr == 1:
+                    inp[i, j, :] = f1(traces[i, j, :])
+                elif flip_nr == 2:
+                    inp[i, j, :] = f2(traces[i, j, :])
+                elif flip_nr == 3:
+                    inp[i, j, :] = f3(traces[i, j, :])
+
+            return inp, target
