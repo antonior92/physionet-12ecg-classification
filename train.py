@@ -233,7 +233,7 @@ if __name__ == '__main__':
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/output_prestage_transformer_old',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/server/transformer_eval/masked_samples_8',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
