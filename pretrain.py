@@ -236,7 +236,7 @@ if __name__ == '__main__':
     if args.trans_train_type.lower() == 'masking':
         loss = nn.MSELoss(reduction='sum')
     elif args.trans_train_type.lower() == 'flipping':
-        loss = nn.CrossEntropyLoss()  # reduction='sum'
+        loss = nn.CrossEntropyLoss()
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", ])

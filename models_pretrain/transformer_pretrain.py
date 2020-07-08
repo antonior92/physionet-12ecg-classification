@@ -2,13 +2,14 @@ import math
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from models_pretrain.masks_transformer import *
-import matplotlib.pyplot as plt
+
 
 class PretrainedTransformerBlock(nn.Module):
     """Get reusable part from MyTransformer and return new model. Include Linear block with the given output_size."""
 
-    def __init__(self, pretrained, output_size, freeze=False):
+    def __init__(self, pretrained, output_size, freeze=True):
         super(PretrainedTransformerBlock, self).__init__()
+        self.freeze = freeze
         self.N_LEADS = 12
         self.output_size = output_size
         self.steps_concat = pretrained.steps_concat
@@ -18,7 +19,7 @@ class PretrainedTransformerBlock(nn.Module):
         self.pos_encoder = pretrained._modules['pos_encoder']
         self.transformer_encoder = pretrained._modules['transformer_encoder']
 
-        if freeze:
+        if self.freeze:
             for param in self.encoder.parameters():
                 param.requires_grad = False
             for param in self.pos_encoder.parameters():
@@ -159,7 +160,8 @@ class MyTransformer(nn.Module):
 
         return output, []
 
-    def get_pretrained(self, output_size, freeze=False):
+    def get_pretrained(self, output_size, finetuning=False):
+        freeze = not finetuning
         return PretrainedTransformerBlock(self, output_size, freeze)
 
     def get_input_and_targets(self, traces):

@@ -128,11 +128,15 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# added by DGt
-/mdl/*
+#####
+# added by Daniel
+#####
+# general working directories
 /Training_WFDB/*
 /output_2020*
-/output_test*
 .idea/
 /__pycache__/
+# stored models
 /server/*
+/evaluation_transformer/learning_curves/*
+/evaluation_transformer/masked_*

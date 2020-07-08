@@ -101,7 +101,8 @@ class ECGDataset(abc.Sequence):
         for root, _, file in os.walk(input_folder):
             for ff in file:
                 f = os.path.join(root, ff)
-                if os.path.isfile(f) and not f.lower().startswith('.') and f.lower().endswith('mat'):
+                head, tail = os.path.split(f)
+                if os.path.isfile(f) and not tail.lower().startswith('.') and tail.lower().endswith('mat'):
                     input_files.append(os.path.relpath(f, input_folder))
         self.input_file = input_files
         self.input_folder = input_folder
