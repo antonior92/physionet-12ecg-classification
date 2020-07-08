@@ -8,7 +8,7 @@ class PretrainedTransformerXLBlock(nn.Module):
     """  # Get reusable part from MyTransformerXL and return new model.
          # Include Linear block with the given output_size.
     """
-    def __init__(self, pretrained, output_size, freeze=False):
+    def __init__(self, pretrained, output_size, freeze=True):
         super(PretrainedTransformerXLBlock, self).__init__()
         self.N_LEADS = 12
         self.emb_size = pretrained._modules['decoder'].out_features

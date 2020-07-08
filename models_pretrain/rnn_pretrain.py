@@ -5,7 +5,7 @@ import torch.nn as nn
 class PretrainedRNNBlock(nn.Module):
     """Get reusable part from MyRNN and return new model. Include Linear block with the given output_size."""
 
-    def __init__(self, pretrained, output_size, freeze=False):
+    def __init__(self, pretrained, output_size, freeze=True):
         super(PretrainedRNNBlock, self).__init__()
         self.rnn = pretrained._modules['rnn']
         if freeze:
@@ -35,7 +35,8 @@ class MyRNN(nn.Module):
         o2 = self.linear(o1)
         return o2.transpose(1, 2), []
 
-    def get_pretrained(self, output_size, freeze=False):
+    def get_pretrained(self, output_size, finetuning=False):
+        freeze = not finetuning
         return PretrainedRNNBlock(self, output_size, freeze)
 
     def get_input_and_targets(self, traces):
