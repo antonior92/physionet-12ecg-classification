@@ -27,14 +27,17 @@
 		90,
 		100
 	],
-	"num_heads": 2,
-	"num_trans_layers": 2,
-	"dim_model": 10,
-	"dim_inner": 10,
-	"num_masked_samples": 8,
-	"perc_masked_samp": 0.15,
+	"num_heads": 4,
+	"num_trans_layers": 3,
+	"dim_model": 256,
+	"dim_inner": 768,
 	"steps_concat": 4,
 	"mem_len": 100,
 	"dropout_attn": 0.2,
-	"init_std": 0.02
+	"init_std": 0.02,
+	"trans_train_type": "masking",
+	"train_noise_std": 0.0,
+	"num_masked_samples": 16,
+	"perc_masked_samp": 0.15,
+	"discrete_input": false
 }
