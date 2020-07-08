@@ -41,15 +41,10 @@ class GetMetrics(object):
 def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    # Define pretrain output sequence length
-    if pretrain_stage_config is not None and pretrain_stage_config['pretrain_model'].lower() == 'transformer':
-        seq_len = config['seq_length'] / pretrain_stage_config['steps_concat']
-    else:
-        seq_len = config['seq_length']
     # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
     removed_blocks = 0
     for l in config['net_seq_length']:
-        if l > seq_len:
+        if l > config['seq_length']:
             del config['net_seq_length'][0]
             del config['net_filter_size'][0]
             removed_blocks += 1
@@ -58,7 +53,7 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
              + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
     # Get main model
-    res_net = ResNet1d(input_dim=(n_input_channels, seq_len),
+    res_net = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
                        blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
                        kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
     # Get final prediction stage
@@ -238,13 +233,13 @@ if __name__ == '__main__':
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
-    sys_parser.add_argument('--input_folder', type=str, default='./Training_WFDB',
+    sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/evaluation_transformer/masked_samples_8',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/', 
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
