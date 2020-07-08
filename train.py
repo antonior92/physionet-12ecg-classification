@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
+from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from output_layer import OutputLayer, collapse, DxClasses
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
@@ -32,7 +33,7 @@ class GetMetrics(object):
         f_measure = compute_f_measure(y_true, y_pred)
         f_beta, g_beta = compute_beta_measures(y_true, y_pred, beta=2)
         challenge_metric = compute_challenge_metric(self.weights, y_true, y_pred, self.normal_index)
-        geometric_mean = np.sqrt(f_beta*g_beta)
+        geometric_mean = np.sqrt(f_beta * g_beta)
         return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta,
                 'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
 
@@ -56,21 +57,21 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
         warn("The output of the pretrain stage is not consistent with the conv net "
              "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
              + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
-    # Get resnet
-    resnet = ResNet1d(input_dim=(n_input_channels, seq_len),
-                      blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
-                      kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
+    # Get main model
+    res_net = ResNet1d(input_dim=(n_input_channels, seq_len),
+                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
+                       kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
     # Get final prediction stage
     if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
         pred_stage = RNNPredictionStage(config, n_classes)
     else:
         n_filters_last = config['net_filter_size'][-1]
         n_samples_last = config['net_seq_length'][-1]
-        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last*n_samples_last, n_classes=n_classes)
+        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last * n_samples_last, n_classes=n_classes)
     # get pretrain model if available and combine all models
     if pretrain_stage_config is None:
         # combine the models
-        model = nn.Sequential(resnet, pred_stage)
+        model = nn.Sequential(res_net, pred_stage)
     else:
         if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
             pretrained = MyRNN(pretrain_stage_config)
@@ -82,7 +83,11 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
             pretrained.load_state_dict(pretrain_stage_ckpt['model'])
         ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
         # combine the models
-        model = nn.Sequential(ptrmdl, resnet, pred_stage)
+        if config['eval_transformer']:
+            small_clf = MlpClassifier(config, n_classes, pretrain_stage_config)
+            model = nn.Sequential(ptrmdl, small_clf)
+        else:
+            model = nn.Sequential(ptrmdl, res_net, pred_stage)
     return model
 
 
@@ -197,6 +202,13 @@ if __name__ == '__main__':
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
+    config_parser.add_argument('--finetuning', type=bool, default=False,
+                               help='when there is a pre-trained model, by default it '
+                                    'freezes the weights of the pre-trained model, but with this option'
+                                    'these weight will be fine-tuned during training. Default is False')
+    config_parser.add_argument('--eval_transformer', type=bool, default=False,
+                               help='Evaluates the transformer. If true a small MLP classifier is chosen instead of the '
+                                    'ResNet + prediction stage (default: False).')
     # Model parameters
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
@@ -216,17 +228,13 @@ if __name__ == '__main__':
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
-    config_parser.add_argument('--finetuning',  action='store_true',
-                                help='when there is a pre-trained model, by default it '
-                                     'freezes the weights of the pre-trained model, but with this option'
-                                     'these weight will be fine-tunned during training.')
-    config_parser.add_argument('--train_classes',  choices=['dset', 'scored'], default='scored_classes',
-                                help='what classes are to be used during training.')
-    config_parser.add_argument('--valid_classes',  choices=['dset', 'scored'], default='scored_classes',
-                                help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer',  choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
-                                help='what is the type used for the output layer. Options are '
-                                     '(sigmoid, sigmoid-and-softmax, softmax).')
+    config_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
+                               help='what classes are to be used during training.')
+    config_parser.add_argument('--valid_classes', choices=['dset', 'scored'], default='scored_classes',
+                               help='what classes are to be used during evaluation.')
+    config_parser.add_argument('--outlayer', choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
+                               help='what is the type used for the output layer. Options are '
+                                    '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
@@ -236,7 +244,7 @@ if __name__ == '__main__':
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/',  # '/output_prestage_transformer_old',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/evaluation_transformer/masked_samples_8',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -400,7 +408,7 @@ if __name__ == '__main__':
         # Print message
         message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
                   '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                   'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
+                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
             .format(ep, train_loss, valid_loss, learning_rate,
                     metrics['f_beta'], metrics['g_beta'],
                     metrics['challenge_metric'])
