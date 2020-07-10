@@ -53,6 +53,25 @@ do
 mkdir ./$DSET && tar -xf PhysioNetChallenge2020_$DSET.tar.gz -C ./$DSET --strip-components=1
 done;
 ```
+- After extracting the data, the `tar.gz` files can be removed:
+```
+rm *.tar.gz
+```
+- Check if the sizes of the downloaded and extracted files are correct by running
+```
+$ du -hd 2 .
+```
+the expected output is:
+```
+784M    ./Training_StPetersburg
+650M    ./Training_2
+2.6G    ./Training_PTB-XL
+1.3G    ./Training_CPSC
+1.2G    ./Training_E
+1.3G    ./Training_PTB
+7.8G    .
+```
+
 
 ## Training and evaluating
 
