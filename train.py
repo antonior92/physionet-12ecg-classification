@@ -14,7 +14,7 @@ from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
-from output_layer import OutputLayer, collapse, DxClasses
+from output_layer import OutputLayer, collapse, DxClasses, get_collapse_fun
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
                                   compute_challenge_metric, load_weights)
 
@@ -217,8 +217,8 @@ if __name__ == '__main__':
                                help='number of samples to be used during training. By default use '
                                     'all the samples available. Useful for quick tests.')
     # Final Predictor parameters
-    config_parser.add_argument('--pred_stage_type', type=str, default='mean',
-                               help='type of prediction stage model: LSTM, GRU (default), RNN, mean, max.')
+    config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'mean', 'max'], default='mean',
+                               help='type of prediction stage model: lstm, gru, rnn, mean (default), max.')
     config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
@@ -389,7 +389,7 @@ if __name__ == '__main__':
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
         print(ids)
         # Collapse entries with the same id:
-        unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
+        unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))
         # Get zero one prediction
         y_pred_aux = dx.apply_threshold(y_score, threshold)
         y_pred = dx.target_to_binaryclass(y_pred_aux)

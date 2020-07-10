@@ -5,13 +5,13 @@ import numpy as np
 import pandas as pd
 
 
-def get_collapse_fun(args):
+def get_collapse_fun(tp):
     # choose collapse function
-    if args['pred_stage_type'].lower() == 'mean':
+    if tp == 'mean':
         return lambda y: np.mean(y, axis=0)
-    elif args['pred_stage_type'].lower() == 'max':
+    elif tp == 'max':
         return lambda y: np.max(y, axis=0)
-    elif args['pred_stage_type'].lower() in ['lstm', 'gru', 'rnn']:
+    elif tp in ['lstm', 'gru', 'rnn']:
         return lambda y: y[-1]
 
 
