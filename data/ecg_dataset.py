@@ -4,6 +4,8 @@ from scipy.io import loadmat
 from scipy.signal import decimate, resample_poly
 import itertools
 import collections.abc as abc
+from collections import OrderedDict
+
 
 
 def resample_ecg(trace, input_freq, output_freq):
@@ -108,7 +110,7 @@ class ECGDataset(abc.Sequence):
         self.input_folder = input_folder
         self.freq = freq
         self.only_header = only_header
-        self.id_to_idx = dict(zip(self.get_ids(), range(len(self))))
+        self.id_to_idx = OrderedDict(zip(self.get_ids(), range(len(self))))
 
     def use_only_header(self, only_header=True):
         self.only_header = only_header
@@ -126,7 +128,7 @@ class ECGDataset(abc.Sequence):
         return sorted(classes)
 
     def get_ocurrences(self, classes):
-        class_to_idx = dict(zip(classes, range(len(classes))))
+        class_to_idx = OrderedDict(zip(classes, range(len(classes))))
         counts = np.zeros(len(classes), dtype=int)
         for idx in range(len(self)):
             header = self._getsample(idx, only_header=True)

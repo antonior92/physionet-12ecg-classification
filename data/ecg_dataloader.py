@@ -1,5 +1,6 @@
 import itertools
 from collections import abc as abc
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -79,7 +80,7 @@ def get_batches(batch_size, ids, counts, drop_last=False):
     # Compute dicts with constante voulume
     # Solve a version of "bin packing problem"(https://en.wikipedia.org/wiki/Bin_packing_problem)
     # to sub optimally distribute samples among batches
-    dict_ids_counts = dict(zip(list(ids), list(counts)))
+    dict_ids_counts = OrderedDict(zip(list(ids), list(counts)))
     constant_volume_dicts = to_constant_volume(dict_ids_counts, min_n_batches)
     # Get ids from dicts
     all_ids = [[id for id in ith_ids.keys()] for ith_ids in constant_volume_dicts]

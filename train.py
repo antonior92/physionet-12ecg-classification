@@ -296,8 +296,11 @@ if __name__ == '__main__':
     all_ids = dset.get_ids()
     set_all_ids = set(all_ids)
     # Get pretrained ids
-    pretrain_ids = set_all_ids.intersection(pretrain_ids)  # Get only pretrain ids available
+    pretrain_ids = list(set_all_ids.intersection(pretrain_ids))  # Get only pretrain ids available
     other_ids = list(set_all_ids.difference(pretrain_ids))
+    pretrain_ids.sort()  # to get deterministic behaviour
+    other_ids.sort()  # to get deterministic behaviour
+    rng.shuffle(other_ids)
     n_pretrain_ids = len(pretrain_ids)
     # Get length
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
@@ -308,8 +311,7 @@ if __name__ == '__main__':
         n_train = n_pretrain_ids
         n_valid = n_total - n_train
     # Get train and valid ids
-    rng.shuffle(other_ids)
-    train_ids = other_ids[:n_train - n_pretrain_ids] + list(pretrain_ids)
+    train_ids = other_ids[:n_train - n_pretrain_ids] + pretrain_ids
     valid_ids = other_ids[n_train - n_pretrain_ids:n_total - n_pretrain_ids]
     # Save train and test ids
     with open(os.path.join(folder, 'train_ids.txt'), 'w') as f:
@@ -385,6 +387,7 @@ if __name__ == '__main__':
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
+        print(ids)
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=lambda y: np.mean(y, axis=0))
         # Get zero one prediction
