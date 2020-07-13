@@ -1,6 +1,7 @@
 import itertools
 from collections import abc as abc
 from collections import OrderedDict
+import random
 
 import numpy as np
 import torch
@@ -99,16 +100,15 @@ def get_batches(batch_size, ids, counts, drop_last=False):
 
 
 class ECGBatchloader(abc.Iterable):
-    def __init__(self, dset, ids, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False):
+    def __init__(self, dset, ids, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False,
+                 seed=0):
         self.dset = dset
         if min_length is None:
             min_length = length // 2
         self.transformation = lambda s: SplitLongSignals(s, length, min_length)
         dset.use_only_header(True)
         counts = [len(self.transformation(s)) for s in dset[ids]]
-
         dset.use_only_header(False)
-        self.batches, self.l = get_batches(batch_size, ids, counts, drop_last)
 
         def collapsing_fn(batch):
             traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32) for s in batch], dim=0)
@@ -123,12 +123,25 @@ class ECGBatchloader(abc.Iterable):
                 return (traces, ids, sub_ids)
 
         self.collapsing_fn = collapsing_fn
+        self.ids = ids
+        self.counts = counts
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.rng = random.Random(seed)
 
     def __iter__(self):
-        modified_dset = [itertools.chain.from_iterable(map(self.transformation, self.dset[iter(b)])) for b in self.batches]
+        batches, l = get_batches(self.batch_size, self.ids, self.counts, self.drop_last)
+        modified_dset = [itertools.chain.from_iterable(map(self.transformation, self.dset[iter(b)])) for b in batches]
         x = LoI2IoL(modified_dset)
         batch_loader = map(self.collapsing_fn, x)
         return batch_loader
 
     def __len__(self):
-        return self.l
+        batches, l = get_batches(self.batch_size, self.ids, self.counts, self.drop_last)
+        return l
+
+    def shuffle(self):
+        idx = list(range(len(self.ids)))
+        self.rng.shuffle(idx)
+        self.ids = [self.ids[i] for i in idx]
+        self.counts = [self.counts[i] for i in idx]

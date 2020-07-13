@@ -87,11 +87,13 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
 
 
 # %% Train model
-def train(ep, model, optimizer, train_loader, out_layer, device):
+def train(ep, model, optimizer, train_loader, out_layer, device, shuffle):
     model.train()
     total_loss = 0
     n_entries = 0
     # training progress bar
+    if shuffle:
+        train_loader.shuffle()
     train_desc = "Epoch {:2d}: train - Loss: {:.6f}"
     train_bar = tqdm(initial=0, leave=True, total=len(train_loader),
                      desc=train_desc.format(ep, 0), position=0)
@@ -175,6 +177,8 @@ if __name__ == '__main__':
     # Learning parameters
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
+    config_parser.add_argument('--dont_shuffle', action='store_true',
+                               help='dont shuffle training samples each epoch.')
     config_parser.add_argument('--epochs', type=int, default=200,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
@@ -353,7 +357,8 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
-    train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size,
+                                  length=args.seq_length, seed=args.seed)
     valid_loader = ECGBatchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
     tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
                .format(n_train, 100 * n_train / n_total, len(train_loader))),
@@ -385,9 +390,8 @@ if __name__ == '__main__':
     # run over all epochs
     for ep in range(args.epochs):
         # Train and evaluate
-        train_loss = train(ep, model, optimizer, train_loader, out_layer, device)
+        train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
-        print(ids)
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))
         # Get zero one prediction
