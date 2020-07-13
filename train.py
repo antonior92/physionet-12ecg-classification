@@ -381,7 +381,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
-    best_geom_mean = -np.Inf
+    best_challenge_metric = -np.Inf
     # run over all epochs
     for ep in range(args.epochs):
         # Train and evaluate
@@ -420,7 +420,7 @@ if __name__ == '__main__':
         history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
         # Save best model
-        if best_geom_mean < metrics['geom_mean']:
+        if best_challenge_metric < metrics['challenge_metric']:
             # Save model
             torch.save({'epoch': ep,
                         'threshold': threshold,
@@ -428,7 +428,7 @@ if __name__ == '__main__':
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'model.pth'))
             # Update best validation loss
-            best_geom_mean = metrics['geom_mean']
+            best_challenge_metric = metrics['challenge_metric']
             tqdm.write("Save model!")
         # Call optimizer step
         scheduler.step()
