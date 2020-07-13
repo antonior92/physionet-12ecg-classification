@@ -20,11 +20,11 @@ class TestCVXSoftmax(unittest.TestCase):
         l.backward()
 
         # Convex softmax
-        cvx = CVXSoftmaxLayer(size)
+        cvxsoftmax = CVXSoftmaxLayer(size)
         torch.manual_seed(0)
         xc = torch.randn((size,), requires_grad=True)
         # forward pass
-        yc = cvx.softmax(xc)
+        yc = cvxsoftmax(xc)
         l = torch.sum((yc - 1)**2)
         # backward
         l.backward()
@@ -46,11 +46,11 @@ class TestCVXSoftmax(unittest.TestCase):
         l.backward()
 
         # Convex softmax
-        cvx = CVXSoftmaxLayer(size)
+        cvxsoftmax = CVXSoftmaxLayer(size)
         torch.manual_seed(0)
         xc = torch.randn((bs, size,), requires_grad=True)
         # forward pass
-        yc = cvx.softmax(xc)
+        yc = cvxsoftmax(xc)
         l = torch.sum((yc - 1)**2)
         # backward
         l.backward()

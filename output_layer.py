@@ -3,6 +3,7 @@ import operator
 import functools
 import numpy as np
 import pandas as pd
+from outlayers import CVXSoftmaxLayer, SoftmaxLayer, SigmoidLayer
 
 
 def get_collapse_fun(tp):
@@ -42,10 +43,8 @@ class OutputLayer(object):
         if self.softmax_mask:  # if not empty
             # Save zero tensor to be used as 'null_class' case in the softmax
             self.null_class = torch.zeros((bs, 1), device=device, dtype=dtype)
-        self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='sum')
-        self.ce_loss = torch.nn.CrossEntropyLoss(reduction='sum')
-        self.sigmoid = torch.nn.Sigmoid()
-        self.softmax = torch.nn.Softmax(dim=-1)
+        self.sigmoid = SigmoidLayer()
+        self.softmax = SoftmaxLayer()
 
     def _get_output_components(self, output):
         bs = output.size(0)
@@ -72,8 +71,8 @@ class OutputLayer(object):
 
         loss = 0
         for i, _ in enumerate(self.softmax_mask):
-            loss += self.ce_loss(softmax_outputs[i], softmax_targets[i].to(dtype=torch.long))
-        loss += self.bce_loss(sigmoid_outputs, sigmoid_targets.to(dtype=torch.float32))
+            loss += self.softmax.loss(softmax_outputs[i], softmax_targets[i].to(dtype=torch.long))
+        loss += self.sigmoid.loss(sigmoid_outputs, sigmoid_targets.to(dtype=torch.float32))
 
         return loss
 
