@@ -127,7 +127,23 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+<<<<<<< HEAD
 *.hea
 *.mat
 .vscode/settings.json
 .vscode/launch.json
+=======
+
+#####
+# added by Daniel
+#####
+# general working directories
+/Training_WFDB/*
+/output_2020*
+.idea/
+/__pycache__/
+# stored models
+/server/*
+/evaluation_transformer/learning_curves/*
+/evaluation_transformer/masked_*
+>>>>>>> master

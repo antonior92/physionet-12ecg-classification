@@ -103,7 +103,7 @@ class ResNet1d(nn.Module):
            on Computer Vision and Pattern Recognition (CVPR), 2016, pp. 770-778. https://arxiv.org/pdf/1512.03385.pdf
     """
 
-    def __init__(self, input_dim, blocks_dim, n_classes, kernel_size=17, dropout_rate=0.8):
+    def __init__(self, input_dim, blocks_dim, kernel_size=17, dropout_rate=0.8):
         super(ResNet1d, self).__init__()
         # First layers
         n_filters_in, n_filters_out = input_dim[0], blocks_dim[0][0]
@@ -123,11 +123,6 @@ class ResNet1d(nn.Module):
             resblk1d = ResBlock1d(n_filters_in, n_filters_out, downsample, kernel_size, dropout_rate)
             self.add_module('resblock1d_{0}'.format(i), resblk1d)
             self.res_blocks += [resblk1d]
-
-        # Linear layer
-        n_filters_last, n_samples_last = blocks_dim[-1]
-        last_layer_dim = n_filters_last * n_samples_last
-        self.lin = nn.Linear(last_layer_dim, n_classes)
 
     def forward(self, x):
         """Implement ResNet1d forward propagation"""

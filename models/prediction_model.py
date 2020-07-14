@@ -33,6 +33,7 @@ class RNNPredictionStage(nn.Module):
         self.rnn_input = None
         self.sub_ids = None
 
+        self.rnn_type = args['pred_stage_type'].lower()
         self.rnn = getattr(nn, args['pred_stage_type'].upper())(self.n_filters_last, self.hidden_size, self.num_layers)
         self.skip_connection = nn.Linear(self.n_filters_last, self.hidden_size)
         self.linear = nn.Linear(self.hidden_size * self.n_samples_last, self.n_classes)
@@ -62,8 +63,12 @@ class RNNPredictionStage(nn.Module):
         return output
 
     def init_hidden_layer(self, batch_size, device):
-        # hidden is of size (num_layer, batch_size, hidden_size)
-        hidden_layer = torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
+        if self.rnn_type in ['gru', 'rnn']:
+            # hidden is of size (num_layer, batch_size, hidden_size)
+            hidden_layer = torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
+        else:
+            hidden_layer = (torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device),
+                            torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device))
 
         return hidden_layer
 
