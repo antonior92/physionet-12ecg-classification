@@ -98,7 +98,7 @@ class DxClasses(object):
         i = 0
         # Convert to set/string
         classes = set([str(c) for c in classes])
-        # Remove mutually_exclussive from classes
+        # Remove mutually_exclusive from classes
         if mutually_exclusive is not None:
             all_mutually_exclusive = functools.reduce(operator.add, (m for m in mutually_exclusive))
             classes = classes.difference(all_mutually_exclusive)

@@ -1,6 +1,6 @@
 import math
 import torch.nn as nn
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from torch.nn.modules.transformer import TransformerEncoder, TransformerEncoderLayer
 from models_pretrain.masks_transformer import *
 
 
