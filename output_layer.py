@@ -1,3 +1,4 @@
+import os
 import torch
 import operator
 import functools
@@ -22,7 +23,7 @@ def collapse(x, ids, fn, unique_ids=None):
     return a tuple containing the unique ids and a array with shape (M, *)  where the i-th entry
     is obtaining by applying fn to all entries in `x` with the same id.
 
-    fn should be a function that colapse the first dimention of the array: `fn: ndarray shape(N, *) -> (*)`
+    fn should be a function that collapse the first dimension of the array: `fn: ndarray shape(N, *) -> (*)`
     """
     ids = np.array(ids)
     # Get unique ids
@@ -34,6 +35,35 @@ def collapse(x, ids, fn, unique_ids=None):
         new_x[i, ...] = fn(x[ids == id, ...])
 
     return unique_ids, new_x
+
+
+def get_dx(dset_classes, model_classes, metric_classes, out_layer, settings_dx):
+
+    # Get all classes to be scored
+    df = pd.read_csv(os.path.join(settings_dx, 'dx_mapping_scored.csv'))
+    scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
+
+    # Get classes used in loop over data (model_classes)
+    # and classes used in evaluation metric (metric_classes)
+    model_classes = dset_classes if model_classes == 'dset' else scored_classes
+    metric_classes = dset_classes if metric_classes == 'dset' else scored_classes
+
+    # Get mutually exclusive entries
+    if out_layer == 'sigmoid-and-softmax':
+        with open(os.path.join(settings_dx, 'mutually_exclusivity.txt'), 'r') as file:
+            mutually_exclusive = [line.split(',') for line in file.read().split('\n')]
+        with open(os.path.join(settings_dx, 'null_class.txt'), 'r') as file:
+            null_class = file.read()
+        dx = DxClasses(model_classes, mutually_exclusive, null_class)
+    elif out_layer == 'softmax':
+        with open(os.path.join(settings_dx, 'null_class.txt'), 'r') as file:
+            null_class = file.read()
+        mutually_exclusive = [list(set(model_classes).difference([null_class]))]
+        dx = DxClasses(model_classes, mutually_exclusive, null_class)
+    else:
+        dx = DxClasses(model_classes)
+
+    return dx, metric_classes
 
 
 class OutputLayer(object):

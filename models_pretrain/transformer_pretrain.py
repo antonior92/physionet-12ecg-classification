@@ -88,8 +88,6 @@ class PositionalEncoding(nn.Module):
         Shape:
             x: [sequence length, batch size, embed dim]
             output: [sequence length, batch size, embed dim]
-        Examples:
-            >>> output = pos_encoder(x)
         """
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)

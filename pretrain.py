@@ -1,16 +1,13 @@
-import json
 import torch
 import argparse
-import datetime
 import pandas as pd
 from warnings import warn
-from data import *
 from tqdm import tqdm
 import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
-import random
 
-from data.ecg_dataloader import ECGBatchloader
+from data import *
+from utils import set_output_folder, get_data_ids, write_data_ids, get_dataloaders
 from models_pretrain.transformer_pretrain import MyTransformer
 from models_pretrain.rnn_pretrain import MyRNN
 from models_pretrain.transformerxl_pretrain import MyTransformerXL
@@ -93,7 +90,9 @@ if __name__ == '__main__':
     config_parser.add_argument('--batch_size', type=int, default=32,
                                help='batch size (default: 32).')
     config_parser.add_argument('--valid_split', type=float, default=0.30,
-                               help='fraction of the data used for validation (default: 0.1).')
+                               help='fraction of the data used for validation (default: 0.3).')
+    config_parser.add_argument('--test_split', type=float, default=0.10,
+                               help='fraction of the data used for testing (default: 0.1).')
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
@@ -167,50 +166,25 @@ if __name__ == '__main__':
     # Set device
     device = torch.device('cuda:0' if settings.cuda else 'cpu')
     # Set output folder
-    if settings.folder[-1] == '/':
-        folder = os.path.join(settings.folder, 'output_' +
-                              str(datetime.datetime.now()).replace(":", "_").replace(" ", "_").replace(".", "_"))
-    else:
-        folder = settings.folder
-    # Create output folder if needed
-    try:
-        os.makedirs(folder)
-    except FileExistsError:
-        pass
-    # Save config
-    with open(os.path.join(folder, 'pretrain_config.json'), 'w') as f:
-        json.dump(vars(args), f, indent='\t')
+    folder = set_output_folder(args, settings, prefix='pretrain')
     # Set seed
     torch.manual_seed(args.seed)
-    rng = random.Random(args.seed)
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
-    # Get length
-    n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
-    n_valid = int(n_total * args.valid_split)
-    n_train = n_total - n_valid
-    # Get ids
-    all_ids = dset.get_ids()
-    rng.shuffle(all_ids)
-    train_ids = all_ids[:n_train]
-    valid_ids = all_ids[n_train:n_total]
-    # Save train and test ids
-    with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'w') as f:
-        f.write(','.join(train_ids))
-    with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'w') as f:
-        f.write(','.join(valid_ids))
-    # Define dataset
+    tqdm.write("Done!")
+
+    tqdm.write("Define train, validation and test splits...")
+    train_ids, valid_ids, test_ids = get_data_ids(dset, args)
+    # Save train, valid and test ids
+    write_data_ids(folder, train_ids, valid_ids, test_ids, prefix='pretrain')
+    tqdm.write("Done!")
+
+    tqdm.write("Get dataloaders...")
     # TODO: double check if drop_last works properly
     drop_last = True if args.pretrain_model.lower() == 'transformerxl' else False
-    train_loader = ECGBatchloader(dset, train_ids, batch_size=args.batch_size,
-                                  length=args.seq_length, drop_last=drop_last)
-    valid_loader = ECGBatchloader(dset, valid_ids, batch_size=args.batch_size,
-                                  length=args.seq_length, drop_last=drop_last)
-    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
-               .format(n_train, 100 * n_train / n_total, len(train_loader))),
-    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
-               .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
+    train_loader = get_dataloaders(dset, train_ids, args, drop_last)
+    valid_loader = get_dataloaders(dset, valid_ids, args, drop_last)
     tqdm.write("Done!")
 
     tqdm.write("Define model...")

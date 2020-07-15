@@ -139,4 +139,4 @@ dmypy.json
 # stored models
 /server/*
 /evaluation_transformer/
-/mdl/
+/mdl*

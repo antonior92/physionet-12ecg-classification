@@ -2,8 +2,9 @@
 import os
 import json
 import torch
-from train import get_model
-from output_layer import OutputLayer, DxClasses
+
+from utils import get_model, check_pretrain_model
+from output_layer import OutputLayer, DxClasses, collapse, get_collapse_fun, get_dx
 from data import (get_sample)
 from data.ecg_dataloader import SplitLongSignals
 
@@ -27,20 +28,22 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
             logits.append(output)
         # average logits
         mean_logits = torch.mean(torch.stack(logits), dim=0)
-        y_score = out_layer.get_output(mean_logits).mean(dim=0).detach().cpu().numpy()
+        output = out_layer.get_output(mean_logits).mean(dim=0).detach().cpu().numpy()
 
-        # Get threshold
-        y_pred = (y_score > threshold).astype(int)
+        # Collapse entries with the same id:
+        unique_ids, y_score = collapse(output, ids, fn=get_collapse_fun(config_dict['pred_stage_type']))
 
-        # Reorder according to vector classes
-        y_score = dx.reorganize(y_score, classes, prob=True)
+        # Get zero one prediction
+        y_pred_aux = dx.apply_threshold(y_score, threshold)
+        y_pred = dx.target_to_binaryclass(y_pred_aux)
         y_pred = dx.reorganize(y_pred, classes, prob=False)
+        y_score = dx.reorganize(y_score, classes, prob=True)
     return y_pred, y_score
 
 
 def load_12ECG_model():
     # Define model folder
-    models_folder = 'mdl/'
+    models_folder = os.path.join(os.getcwd(), 'mdl')
 
     # running device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -48,41 +51,41 @@ def load_12ECG_model():
     # list of models
     models = []
 
-    # loop over all folders with models
-    list_model_folder = os.listdir(models_folder)
-    for model_folder in list_model_folder:
+    # get all model folders
+    list_model_subfolder = os.listdir(models_folder)
+    list_model_subfolder.sort()    # make deterministic
+
+    # loop over all model folders
+    for model_subfolder in list_model_subfolder:
+        # get path
+        path = os.path.join(models_folder, model_subfolder)
+
+        # Get pretrained stage config (if available)
+        config_dict_pretrain_stage, _, _ = check_pretrain_model(path, do_print=False)
 
         # Load check point
-        ckpt = torch.load(os.path.join(model_folder, 'model.pth'), map_location=lambda storage, loc: storage)
+        ckpt = torch.load(os.path.join(path, 'model.pth') , map_location=lambda storage, loc: storage)
 
         # Get config
-        config = os.path.join(model_folder, 'config.json')
+        config = os.path.join(path, 'config.json')
         with open(config, 'r') as f:
             config_dict = json.load(f)
 
         # get classes
-        dx = DxClasses.read_csv(os.path.join(model_folder, 'classes.txt'))
+        classes = 'scored'
+        settings_dx = './dx'
+        dx, test_classes = get_dx([], classes, classes, config_dict['outlayer'], settings_dx)
 
-        # Get pretrained stage config (if available)
-        try:
-            config_pretrain_stage = os.path.join(model_folder, 'pretrain_config.json')
-            with open(config_pretrain_stage, 'r') as f:
-                config_dict_pretrain_stage = json.load(f)
-        except:
-            config_dict_pretrain_stage = None
+        # Define output layer
+        out_layer = OutputLayer(config_dict['batch_size'], dx, device)
+
+        # Define threshold
+        threshold = ckpt['threshold']
 
         # Define model
         model = get_model(config_dict, len(dx), config_dict_pretrain_stage)
         model.load_state_dict(ckpt["model"])
-
-        # Device
-        model.to(device)
-
-        # Threshold
-        threshold = ckpt['threshold']
-
-        # Output layer
-        out_layer = OutputLayer(max(config_dict['batch_size'], 1000), dx, device)
+        model.to(device=device)
 
         # append model to list of models
         models.append(model)
