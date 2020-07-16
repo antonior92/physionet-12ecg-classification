@@ -36,7 +36,7 @@ if __name__ == '__main__':
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/mdl',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/mdl_nopretrain',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -62,6 +62,10 @@ if __name__ == '__main__':
     # write some parameters of config_dict to args
     args.batch_size = config_dict['batch_size']
     args.seq_length = config_dict['seq_length']
+    args.seed = config_dict['seed']
+    args.n_total = config_dict['n_total']
+    args.valid_split = config_dict['valid_split']
+    args.test_split = config_dict['test_split']
     # Check if there is pretrained model in the given folder
     config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids = check_pretrain_model(temp_folder)
     pretrain_train_ids, pretrain_valid_ids, pretrain_test_ids = pretrain_ids
@@ -87,17 +91,13 @@ if __name__ == '__main__':
     get_metrics = GetMetrics(weights, test_classes.index(NORMAL))
     tqdm.write("Done!")
 
-    """tqdm.write("Get dataloaders...")
-    test_loader = get_dataloaders(dset, test_ids, args, dx)
-    tqdm.write("Done!")"""
-
     # Load model.
     tqdm.write('Loading 12ECG model...')
     model = load_12ECG_model()
     tqdm.write("Done!")
 
     # get paths of all files to loop over them (no batch-wise but same way as in driver.py)
-    path = os.path.join(os.getcwd(),settings.input_folder)
+    path = os.path.join(os.getcwd(), settings.input_folder)
     file_paths = []
     # r=root, d=directories, f = files
     for r, d, f in os.walk(path):
@@ -105,38 +105,56 @@ if __name__ == '__main__':
             if '.mat' in file and file[:-4] in test_ids:
                 file_paths.append(os.path.join(r, file))
 
+    # progress bar
+    test_desc = "Testing"
+    test_bar = tqdm(initial=0, leave=True, total=len(file_paths), desc=test_desc, position=0)
+    # collection lists
+    y_true_list = []
+    y_pred_list = []
+    y_score_list = []
     # Compute model predictions
     tqdm.write('Compute model predictions...')
-    for i, file_name in enumerate(file_paths):
+    for i, file_path in enumerate(file_paths):
         with torch.no_grad():
+            # get folder and file name
+            file_name = os.path.split(file_path)[-1]
+            file_folder = os.path.split(os.path.split(file_path)[0])[-1]
 
             # loop over all test files
-            data, header_data = load_challenge_data(file_name)
+            data, header_data = load_challenge_data(file_path)
             y_pred, y_score = run_12ECG_classifier(data, header_data, test_classes, model)
 
-            #  _, y_score, all_targets, ids = evaluate(
+            # get target / true value
+            idx = dset.input_file.index(os.path.join(file_folder, file_name))
+            header = dset._getsample(13, only_header=True)
+            target = dx.get_target_from_labels(header['labels']).reshape(1, -1)
+            y_true1 = dx.target_to_binaryclass(target)
+            y_true2 = dx.reorganize(y_true1, test_classes).reshape(1, -1)
 
+            # collect the predictions, scores and true labels
+            y_pred_list.append(y_pred)
+            y_score_list.append(y_score)
+            y_true_list.append(y_true2)
 
-            all_targets = []
-            ids = []
-
-            # Get metrics
-            y_true = dx.target_to_binaryclass(all_targets)
-            _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-            y_true = dx.reorganize(y_true, test_classes)
-            metrics = get_metrics(y_true, y_pred, y_score)
-
-        """num_files = len(input_files)
-        
-        for i, f in enumerate(input_files):
-            print('    {}/{}...'.format(i + 1, num_files))
-            tmp_input_file = os.path.join(input_directory, f)
-            data, header_data = load_challenge_data(tmp_input_file)
-            current_label, current_score = run_12ECG_classifier(data, header_data, classes, model)
-            # Save results."""
+            # update the progress bar
+            test_bar.update(1)
+    test_bar.close()
     tqdm.write('Done')
+    # lists to arrays
+    y_p = np.concatenate(y_pred_list, axis=0)
+    y_s = np.concatenate(y_score_list, axis=0)
+    y_t = np.concatenate(y_true_list, axis=0)
+    # Get metrics
+    metrics = get_metrics(y_t, y_p, y_s)
+    metrics = get_metrics(y_t, y_p, y_s)
+    metrics = get_metrics(y_t, y_p, y_s)
+    metrics = get_metrics(y_t, y_p, y_s)
+    # print metrics
+    message = "Metrics: \tf_beta: {:.3f} \tg_beta: {:.3f} \tgeom_mean: {:.3f} \t challenge: {:.3f}".format(
+        metrics['f_beta'], metrics['g_beta'], metrics['geom_mean'], metrics['challenge_metric'])
+    tqdm.write(message)
 
-    # evaluate
-    tqdm.write('Evaluate predictions...')
-    # TODO
-    tqdm.write('Done')
+    # save data
+    store_file_name = 'results.json'
+    with open(os.path.join(folder, store_file_name), 'w') as f:
+        json.dump(metrics, f, indent='\t')

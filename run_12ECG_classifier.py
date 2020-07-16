@@ -19,31 +19,36 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         # Get traces
         traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
                               SplitLongSignals(sample, length=config_dict['seq_length'])], dim=0)
-
         logits = []
         # Apply all models model
         for model in models:
             model.eval()
-            output = model(traces)
-            logits.append(output)
+            out = model(traces)
+            logits.append(out)
         # average logits
         mean_logits = torch.mean(torch.stack(logits), dim=0)
-        output = out_layer.get_output(mean_logits).mean(dim=0).detach().cpu().numpy()
+        out1 = out_layer.get_output(mean_logits).detach().cpu().numpy()
+
+        # if output is just one batch, then should be (1, 26), otherwise (x,26)
 
         # Collapse entries with the same id:
-        unique_ids, y_score = collapse(output, ids, fn=get_collapse_fun(config_dict['pred_stage_type']))
+        fn = get_collapse_fun(config_dict['pred_stage_type'])
+        y_score = fn(out1)
+
+        # get y_score of shape (1,n_classes)
+        y_score1 = y_score.reshape(1, -1)
 
         # Get zero one prediction
-        y_pred_aux = dx.apply_threshold(y_score, threshold)
-        y_pred = dx.target_to_binaryclass(y_pred_aux)
-        y_pred = dx.reorganize(y_pred, classes, prob=False)
-        y_score = dx.reorganize(y_score, classes, prob=True)
-    return y_pred, y_score
+        y_pred_aux = dx.apply_threshold(y_score1, threshold)
+        y_pred1 = dx.target_to_binaryclass(y_pred_aux).reshape(1, -1)
+        y_pred2 = dx.reorganize(y_pred1, classes, prob=False)
+        y_score2 = dx.reorganize(y_score1, classes, prob=True)
+    return y_pred2, y_score2
 
 
 def load_12ECG_model():
     # Define model folder
-    models_folder = os.path.join(os.getcwd(), 'mdl')
+    models_folder = os.path.join(os.getcwd(), 'mdl_nopretrain')
 
     # running device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -52,7 +57,8 @@ def load_12ECG_model():
     models = []
 
     # get all model folders
-    list_model_subfolder = os.listdir(models_folder)
+    list_model_subfolder = [filename for filename in os.listdir(models_folder) if
+                            os.path.isdir(os.path.join(models_folder,filename))]
     list_model_subfolder.sort()    # make deterministic
 
     # loop over all model folders
@@ -77,7 +83,8 @@ def load_12ECG_model():
         dx, test_classes = get_dx([], classes, classes, config_dict['outlayer'], settings_dx)
 
         # Define output layer
-        out_layer = OutputLayer(config_dict['batch_size'], dx, device)
+        bs = 256  # config_dict['batch_size']
+        out_layer = OutputLayer(bs, dx, device)
 
         # Define threshold
         threshold = ckpt['threshold']

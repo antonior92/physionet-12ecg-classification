@@ -1,4 +1,3 @@
-import json
 import argparse
 import torch
 import pandas as pd
@@ -67,7 +66,7 @@ def evaluate(ep, model, valid_loader, out_layer, device):
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_loader),
                     desc=eval_desc.format(ep, 0), position=0)
     for i, batch in enumerate(valid_loader):
-        if i < 50:
+        if i < 25:
             with torch.no_grad():
                 traces, target, ids, sub_ids = batch
                 traces = traces.to(device=device)
