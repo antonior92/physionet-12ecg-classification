@@ -1,4 +1,4 @@
-from output_layer.cvx_layers import CVXSoftmaxLayer
+from outlayers.cvx_layers import CVXSoftmaxLayer
 import unittest
 import torch
 import torch.nn.functional as F

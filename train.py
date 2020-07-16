@@ -9,12 +9,12 @@ import torch.nn as nn
 from warnings import warn
 from data import *
 from tqdm import tqdm
+from outlayers import collapse, DxMap, get_collapse_fun, outlayer_from_str
 
 from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
-from output_layer import OutputLayer, collapse, DxClasses, get_collapse_fun
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
                                   compute_challenge_metric, load_weights)
 
@@ -150,7 +150,7 @@ def evaluate(ep, model, valid_loader, out_layer, device):
                 model[-1].update_sub_ids(sub_ids)
             # Forward pass
             logits = model(traces)
-            output = out_layer.get_output(logits)
+            output = out_layer(logits)
             # Loss
             loss = out_layer.loss(logits, target)
             # Get loss
@@ -330,24 +330,23 @@ if __name__ == '__main__':
     # Get all classes to be scored
     df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
     scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
+    # Get name alias
+    with open(os.path.join(settings.dx, 'alias.txt'), 'r') as f:
+        alias = [x.split(',') for x in f.read().split('\n')]
     # Get training classes
     train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
     valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
-    # Get mutually exclusive entries
-    if args.outlayer == 'sigmoid-and-softmax':
-        with open(os.path.join(settings.dx, 'mutually_exclusivity.txt'), 'r') as file:
-            mutually_exclusive = [line.split(',') for line in file.read().split('\n')]
-        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
-            null_class = file.read()
-        dx = DxClasses(train_classes, mutually_exclusive, null_class)
-    if args.outlayer == 'softmax':
-        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
-            null_class = file.read()
-        mutually_exclusive = [list(set(train_classes).difference([null_class]))]
-        dx = DxClasses(train_classes, mutually_exclusive, null_class)
-    else:
-        dx = DxClasses(train_classes)
-    out_layer = OutputLayer(args.batch_size, dx, device)
+    # Compute number of training set classes
+    n_train_classes = len(train_classes) - sum([len(a) - 1 for a in alias])
+    # Get outlayer from string
+    out_layer = outlayer_from_str(args.out)
+    # Get all idx subidx for training classes
+    # TODO: 1. set ids and subids to classes that are aliased; 2. use thresholds and proportions;
+    idx = [i for _ in range(m) for i, m in enumerate(out_layer.maximum_target(n_train_classes))]
+    subidx = [i for i in range(m) for m in enumerate(out_layer.maximum_target(n_train_classes))]
+    # Define map between last layer and output
+    isin = np.isin(train_classes, valid_classes)  # Filter according to valid classes
+    dx = DxMap(train_classes[isin], idx[isin], subidx[isin])
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
