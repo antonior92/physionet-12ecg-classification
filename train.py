@@ -66,30 +66,29 @@ def evaluate(ep, model, valid_loader, out_layer, device):
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_loader),
                     desc=eval_desc.format(ep, 0), position=0)
     for i, batch in enumerate(valid_loader):
-        if i < 25:
-            with torch.no_grad():
-                traces, target, ids, sub_ids = batch
-                traces = traces.to(device=device)
-                target = target.to(device=device)
-                # update sub_ids for final prediction stage model
-                if model[-1]._get_name() == 'RNNPredictionStage':
-                    model[-1].update_sub_ids(sub_ids)
-                # Forward pass
-                logits = model(traces)
-                output = out_layer.get_output(logits)
-                # Loss
-                loss = out_layer.loss(logits, target)
-                # Get loss
-                total_loss += loss.detach().cpu().numpy()
-                # append
-                all_targets.append(target.detach().cpu().numpy())
-                all_outputs.append(output.detach().cpu().numpy())
-                all_ids.extend(ids)
-                bs = target.size(0)
-                n_entries += bs
-                # Print result
-                eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
-                eval_bar.update(bs)
+        with torch.no_grad():
+            traces, target, ids, sub_ids = batch
+            traces = traces.to(device=device)
+            target = target.to(device=device)
+            # update sub_ids for final prediction stage model
+            if model[-1]._get_name() == 'RNNPredictionStage':
+                model[-1].update_sub_ids(sub_ids)
+            # Forward pass
+            logits = model(traces)
+            output = out_layer.get_output(logits)
+            # Loss
+            loss = out_layer.loss(logits, target)
+            # Get loss
+            total_loss += loss.detach().cpu().numpy()
+            # append
+            all_targets.append(target.detach().cpu().numpy())
+            all_outputs.append(output.detach().cpu().numpy())
+            all_ids.extend(ids)
+            bs = target.size(0)
+            n_entries += bs
+            # Print result
+            eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
+            eval_bar.update(bs)
     eval_bar.close()
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
@@ -255,7 +254,7 @@ if __name__ == '__main__':
     # run over all epochs
     for ep in range(args.epochs):
         # Train and evaluate
-        #train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
+        train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))

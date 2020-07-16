@@ -48,7 +48,7 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
 
 def load_12ECG_model():
     # Define model folder
-    models_folder = os.path.join(os.getcwd(), 'mdl_nopretrain')
+    models_folder = os.path.join(os.getcwd(), 'mdl')
 
     # running device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

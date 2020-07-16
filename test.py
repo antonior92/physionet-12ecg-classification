@@ -36,7 +36,7 @@ if __name__ == '__main__':
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/mdl_nopretrain',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/mdl',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -145,9 +145,6 @@ if __name__ == '__main__':
     y_s = np.concatenate(y_score_list, axis=0)
     y_t = np.concatenate(y_true_list, axis=0)
     # Get metrics
-    metrics = get_metrics(y_t, y_p, y_s)
-    metrics = get_metrics(y_t, y_p, y_s)
-    metrics = get_metrics(y_t, y_p, y_s)
     metrics = get_metrics(y_t, y_p, y_s)
     # print metrics
     message = "Metrics: \tf_beta: {:.3f} \tg_beta: {:.3f} \tgeom_mean: {:.3f} \t challenge: {:.3f}".format(
