@@ -65,21 +65,20 @@ if __name__ == '__main__':
     args.seed = config_dict['seed']
     args.n_total = config_dict['n_total']
     args.valid_split = config_dict['valid_split']
-    args.test_split = config_dict['test_split']
     # Check if there is pretrained model in the given folder
     config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids = check_pretrain_model(temp_folder)
-    pretrain_train_ids, pretrain_valid_ids, pretrain_test_ids = pretrain_ids
+    pretrain_train_ids, pretrain_valid_ids = pretrain_ids
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
     tqdm.write("Done!")
 
-    tqdm.write("Load data...")
+    tqdm.write("Load test=valid data split...")
     # if pretrained ids are available (not empty)
-    if pretrain_train_ids and pretrain_valid_ids and pretrain_test_ids:
-        test_ids = pretrain_test_ids
+    if pretrain_train_ids and pretrain_valid_ids:
+        valid_ids = pretrain_valid_ids
     else:
-        _, _, test_ids = get_data_ids(dset, args)
+        _, valid_ids = get_data_ids(dset, args)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -91,65 +90,79 @@ if __name__ == '__main__':
     get_metrics = GetMetrics(weights, test_classes.index(NORMAL))
     tqdm.write("Done!")
 
-    # Load model.
-    tqdm.write('Loading 12ECG model...')
-    model = load_12ECG_model()
+    tqdm.write("Get dataloaders...")
+    valid_loader = get_dataloaders(dset, valid_ids, args, dx, seed=args.seed)
     tqdm.write("Done!")
 
-    # get paths of all files to loop over them (no batch-wise but same way as in driver.py)
-    path = os.path.join(os.getcwd(), settings.input_folder)
-    file_paths = []
-    # r=root, d=directories, f = files
-    for r, d, f in os.walk(path):
-        for file in f:
-            if '.mat' in file and file[:-4] in test_ids:
-                file_paths.append(os.path.join(r, file))
+    # Load model.
+    tqdm.write('Loading 12ECG model...')
+    model_collection = load_12ECG_model()
+    models, dx, out_layer, threshold, model_config, _ = model_collection
+    tqdm.write("Done!")
 
     # progress bar
     test_desc = "Testing"
-    test_bar = tqdm(initial=0, leave=True, total=len(file_paths), desc=test_desc, position=0)
+    test_bar = tqdm(initial=0, leave=True, total=len(valid_loader), desc=test_desc, position=0)
     # collection lists
-    y_true_list = []
-    y_pred_list = []
-    y_score_list = []
+    n_entries = 0
+    all_outputs = []
+    all_targets = []
+    all_ids = []
     # Compute model predictions
     tqdm.write('Compute model predictions...')
-    for i, file_path in enumerate(file_paths):
+    for i, batch in enumerate(valid_loader):
         with torch.no_grad():
-            # get folder and file name
-            file_name = os.path.split(file_path)[-1]
-            file_folder = os.path.split(os.path.split(file_path)[0])[-1]
+            traces, target, ids, sub_ids = batch
+            traces = traces.to(device=device)
+            target = target.to(device=device)
+            # run models
+            logits = []
+            # loop over all ensemble models
+            for model in models:
+                model.eval()
+                # update sub_ids for final prediction stage model
+                if model[-1]._get_name() == 'RNNPredictionStage':
+                    model[-1].update_sub_ids(sub_ids)
+                # forward pass
+                out = model(traces)
+                # collect logits
+                logits.append(out)
+            # average logits
+            mean_logits = torch.mean(torch.stack(logits), dim=0)
+            output = out_layer.get_output(mean_logits)
 
-            # loop over all test files
-            data, header_data = load_challenge_data(file_path)
-            y_pred, y_score = run_12ECG_classifier(data, header_data, test_classes, model)
-
-            # get target / true value
-            idx = dset.input_file.index(os.path.join(file_folder, file_name))
-            header = dset._getsample(13, only_header=True)
-            target = dx.get_target_from_labels(header['labels']).reshape(1, -1)
-            y_true1 = dx.target_to_binaryclass(target)
-            y_true2 = dx.reorganize(y_true1, test_classes).reshape(1, -1)
-
-            # collect the predictions, scores and true labels
-            y_pred_list.append(y_pred)
-            y_score_list.append(y_score)
-            y_true_list.append(y_true2)
+            # append
+            all_targets.append(target.detach().cpu().numpy())
+            all_outputs.append(output.detach().cpu().numpy())
+            all_ids.extend(ids)
+            bs = target.size(0)
+            n_entries += bs
 
             # update the progress bar
-            test_bar.update(1)
+            test_bar.update(bs)
     test_bar.close()
     tqdm.write('Done')
-    # lists to arrays
-    y_p = np.concatenate(y_pred_list, axis=0)
-    y_s = np.concatenate(y_score_list, axis=0)
-    y_t = np.concatenate(y_true_list, axis=0)
+
+    tqdm.write('Evaluate predictions...')
+    y_score = np.concatenate(all_outputs)
+    all_targets = np.concatenate(all_targets)
+    # Collapse entries with the same id:
+    unique_ids, y_score = collapse(y_score, all_ids, fn=get_collapse_fun(model_config['pred_stage_type']))
+    # Get zero one prediction
+    y_pred_aux = dx.apply_threshold(y_score, threshold)
+    y_pred = dx.target_to_binaryclass(y_pred_aux)
+    y_pred = dx.reorganize(y_pred, test_classes, prob=False)
+    y_score = dx.reorganize(y_score, test_classes, prob=True)
     # Get metrics
-    metrics = get_metrics(y_t, y_p, y_s)
+    y_true = dx.target_to_binaryclass(all_targets)
+    _, y_true = collapse(y_true, all_ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
+    y_true = dx.reorganize(y_true, test_classes)
+    metrics = get_metrics(y_true, y_pred, y_score)
     # print metrics
     message = "Metrics: \tf_beta: {:.3f} \tg_beta: {:.3f} \tgeom_mean: {:.3f} \t challenge: {:.3f}".format(
         metrics['f_beta'], metrics['g_beta'], metrics['geom_mean'], metrics['challenge_metric'])
     tqdm.write(message)
+    tqdm.write('Done!')
 
     # save data
     store_file_name = 'results.json'

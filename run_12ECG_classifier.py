@@ -4,7 +4,7 @@ import json
 import torch
 
 from utils import get_model, check_pretrain_model
-from output_layer import OutputLayer, DxClasses, collapse, get_collapse_fun, get_dx
+from output_layer import OutputLayer, get_collapse_fun, get_dx
 from data import (get_sample)
 from data.ecg_dataloader import SplitLongSignals
 
@@ -28,8 +28,6 @@ def run_12ECG_classifier(data, header_data, classes, mdl):
         # average logits
         mean_logits = torch.mean(torch.stack(logits), dim=0)
         out1 = out_layer.get_output(mean_logits).detach().cpu().numpy()
-
-        # if output is just one batch, then should be (1, 26), otherwise (x,26)
 
         # Collapse entries with the same id:
         fn = get_collapse_fun(config_dict['pred_stage_type'])
@@ -83,6 +81,7 @@ def load_12ECG_model():
         dx, test_classes = get_dx([], classes, classes, config_dict['outlayer'], settings_dx)
 
         # Define output layer
+        # we need bigger bs since some exams have ~170*4096 points and then we get problems in output layer
         bs = 256  # config_dict['batch_size']
         out_layer = OutputLayer(bs, dx, device)
 

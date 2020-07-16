@@ -115,8 +115,6 @@ if __name__ == '__main__':
                                help='batch size (default: 32).')
     config_parser.add_argument('--valid_split', type=float, default=0.30,
                                help='fraction of the data used for validation (default: 0.3).')
-    config_parser.add_argument('--test_split', type=float, default=0.10,
-                               help='fraction of the data used for testing (default: 0.1).')
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
@@ -158,8 +156,6 @@ if __name__ == '__main__':
                                help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--test_classes', choices=['scored'], default='scored_classes',
-                               help='what classes are to be used during testing.')
     config_parser.add_argument('--outlayer', choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
                                help='what is the type used for the output layer. Options are '
                                     '(sigmoid, sigmoid-and-softmax, softmax).')
@@ -172,7 +168,7 @@ if __name__ == '__main__':
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/',
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/mdl/model_0',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -194,22 +190,21 @@ if __name__ == '__main__':
     torch.manual_seed(args.seed)
     # Check if there is pretrained model in the given folder
     config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids = check_pretrain_model(folder)
-    pretrain_train_ids, pretrain_valid_ids, pretrain_test_ids = pretrain_ids
+    pretrain_train_ids, pretrain_valid_ids = pretrain_ids
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
     tqdm.write("Done!")
 
-    tqdm.write("Define train, validation and test splits...")
+    tqdm.write("Define train and validation splits...")
     # if pretrained ids are available (not empty)
-    if pretrain_train_ids and pretrain_valid_ids and pretrain_test_ids:
+    if pretrain_train_ids and pretrain_valid_ids:
         train_ids = pretrain_train_ids
         valid_ids = pretrain_valid_ids
-        test_ids = pretrain_test_ids
     else:
-        train_ids, valid_ids, test_ids = get_data_ids(dset, args)
-    # Save train, validation and test ids
-    write_data_ids(folder, train_ids, valid_ids, test_ids)
+        train_ids, valid_ids = get_data_ids(dset, args)
+    # Save train, validation ids
+    write_data_ids(folder, train_ids, valid_ids)
     tqdm.write("Done!")
 
     tqdm.write("Define output layer...")

@@ -121,19 +121,15 @@ def check_pretrain_model(folder, do_print=True):
         with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'r') as f:
             pretrain_valid_ids = f.read().split(',')
             pretrain_valid_ids.sort()
-        with open(os.path.join(folder, 'pretrain_test_ids.txt'), 'r') as f:
-            pretrain_test_ids = f.read().split(',')
-            pretrain_test_ids.sort()
     except:
         ckpt_pretrain_stage = None
         config_dict_pretrain_stage = None
         pretrain_train_ids = []
         pretrain_valid_ids = []
-        pretrain_test_ids = []
         if do_print:
             tqdm.write("Did not found pretrained model!")
 
-    pretrain_ids = (pretrain_train_ids, pretrain_valid_ids, pretrain_test_ids)
+    pretrain_ids = (pretrain_train_ids, pretrain_valid_ids)
     return config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids
 
 
@@ -142,20 +138,18 @@ def get_data_ids(dset, args):
     # Get length
     n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
     n_valid = int(n_total * args.valid_split)
-    n_test = int(n_total * args.test_split)
-    n_train = n_total - n_valid - n_test
-    assert n_train + n_valid + n_test == n_total, "data split: incorrect sizes"
+    n_train = n_total - n_valid
+    assert n_train + n_valid == n_total, "data split: incorrect sizes"
     # Get ids
     all_ids = dset.get_ids()
     rng.shuffle(all_ids)
     train_ids = all_ids[:n_train]
     valid_ids = all_ids[n_train:n_train + n_valid]
-    test_ids = all_ids[n_train + n_valid:n_total]
 
-    return train_ids, valid_ids, test_ids
+    return train_ids, valid_ids
 
 
-def write_data_ids(folder, train_ids, valid_ids, test_ids, prefix=''):
+def write_data_ids(folder, train_ids, valid_ids, prefix=''):
     file_name_addon = ''
     if prefix:
         file_name_addon = prefix + '_'
@@ -164,8 +158,6 @@ def write_data_ids(folder, train_ids, valid_ids, test_ids, prefix=''):
         f.write(','.join(train_ids))
     with open(os.path.join(folder, file_name_addon+'valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
-    with open(os.path.join(folder, file_name_addon+'test_ids.txt'), 'w') as f:
-        f.write(','.join(test_ids))
 
 
 def get_dataloaders(dset, data_ids, args, dx=None, seed=None, drop_last=False):

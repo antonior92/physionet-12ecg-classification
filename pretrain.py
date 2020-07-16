@@ -91,8 +91,6 @@ if __name__ == '__main__':
                                help='batch size (default: 32).')
     config_parser.add_argument('--valid_split', type=float, default=0.30,
                                help='fraction of the data used for validation (default: 0.3).')
-    config_parser.add_argument('--test_split', type=float, default=0.10,
-                               help='fraction of the data used for testing (default: 0.1).')
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
@@ -174,17 +172,17 @@ if __name__ == '__main__':
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
     tqdm.write("Done!")
 
-    tqdm.write("Define train, validation and test splits...")
-    train_ids, valid_ids, test_ids = get_data_ids(dset, args)
-    # Save train, valid and test ids
-    write_data_ids(folder, train_ids, valid_ids, test_ids, prefix='pretrain')
+    tqdm.write("Define train and validation splits...")
+    train_ids, valid_ids = get_data_ids(dset, args)
+    # Save train, valid ids
+    write_data_ids(folder, train_ids, valid_ids, prefix='pretrain')
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
     # TODO: double check if drop_last works properly
     drop_last = True if args.pretrain_model.lower() == 'transformerxl' else False
-    train_loader = get_dataloaders(dset, train_ids, args, drop_last)
-    valid_loader = get_dataloaders(dset, valid_ids, args, drop_last)
+    train_loader = get_dataloaders(dset, train_ids, args, drop_last=drop_last)
+    valid_loader = get_dataloaders(dset, valid_ids, args, drop_last=drop_last)
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
