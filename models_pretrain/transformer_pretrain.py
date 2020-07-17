@@ -1,7 +1,9 @@
 import math
 import torch.nn as nn
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+import torch.distributions
+from torch.nn.modules.transformer import TransformerEncoder, TransformerEncoderLayer
 from models_pretrain.masks_transformer import *
+import copy
 
 
 class PretrainedTransformerBlock(nn.Module):
@@ -31,7 +33,7 @@ class PretrainedTransformerBlock(nn.Module):
         self.decoder = nn.Linear(self.model_size, self.output_size * self.steps_concat)
 
     def forward(self, src):
-        batch_size, n_feature, seq_len = src.shape
+        _, n_feature, seq_len = src.shape
         # concatenate neighboring samples in feature channel
         src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
         # put in the right shape for transformer
@@ -88,8 +90,6 @@ class PositionalEncoding(nn.Module):
         Shape:
             x: [sequence length, batch size, embed dim]
             output: [sequence length, batch size, embed dim]
-        Examples:
-            >>> output = pos_encoder(x)
         """
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
@@ -122,28 +122,20 @@ class MyTransformer(nn.Module):
             self.decoder = nn.Linear(self.dim_model, self.dim_concat)
         elif self.trans_train_type.lower() == 'flipping':
             self.decoder = nn.Linear(self.dim_model, self.N_LEADS)
-            self.decoder_class = nn.Linear(self.seq_len//self.steps_concat, 4)
+            self.decoder_class = nn.Linear(self.seq_len // self.steps_concat, 4)
 
     def forward(self, src, dummyvar):
-        batch_size, n_feature, seq_len = src.shape
+        _, n_feature, seq_len = src.shape
         # concatenate neighboring samples in feature channel
         src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
         # put in the right shape for transformer
         # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
         src2 = src1.transpose(0, 1)
-        # generate mask
-        if self.trans_train_type.lower() == 'masking':
-            # generate random mask
-            self.mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples,
-                                                      self.perc_masked_samples).to(next(self.parameters()).device)
-        elif self.trans_train_type.lower() == 'flipping':
-            # no mask needed
-            self.mask = torch.zeros(len(src2), len(src2)).to(next(self.parameters()).device)
 
         # process data
         src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
         src4 = self.pos_encoder(src3)
-        out1 = self.transformer_encoder(src4, self.mask)
+        out1 = self.transformer_encoder(src4)  # src_key_padding_mask=...
 
         if self.trans_train_type.lower() == 'masking':
             out2 = self.decoder(out1)
@@ -152,7 +144,7 @@ class MyTransformer(nn.Module):
             out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
             # Put in the right shape for transformer
             output = out3.transpose(1, 2)
-        elif self.trans_train_type.lower() == 'flipping':
+        else:
             out2 = self.decoder(out1)
             out3 = out2.permute(1, 2, 0)
             out4 = self.decoder_class(out3)
@@ -165,16 +157,41 @@ class MyTransformer(nn.Module):
         return PretrainedTransformerBlock(self, output_size, freeze)
 
     def get_input_and_targets(self, traces):
+        """
+        self.mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples, self.perc_masked_samples)
+        """
+
         # CASE: Masking
         if self.trans_train_type.lower() == 'masking':
-            # noise on input
+            inp = copy.deepcopy(traces)
+            # parameter
+            batch_size = traces.shape[0]
+            # FIRST: mask out random subsequences
+            # number of total subsequences of length num_masked_samples to be masked
+            # add a uniform random number U(-0.5,+0.5) for probabilistic rounding
+            temp = np.random.rand() - 0.5
+            num_subseq = int(self.perc_masked_samples * self.seq_len // self.num_masked_samples + temp)
+            # get inidices to mask out
+            # (better solution would be if each row in idx_ind would be sampled without replacement.
+            # Current solution allows doubling of masked out subsequences.
+            idx_ind = np.random.choice(self.seq_len // self.num_masked_samples, [batch_size, num_subseq])
+            idx_ind = torch.tensor(idx_ind) * self.num_masked_samples
+            idx = copy.deepcopy(idx_ind)
+            for i in range(1, self.num_masked_samples):
+                idx = torch.cat([idx, idx_ind + i], 1)
+            # mask all leads of the given indices
+            for i in range(batch_size):
+                inp[i, :, idx[i, :]] = 0
+
+            # SECOND: add noise to input sequence
             if self.train_noise_std > 0:
                 noise = torch.normal(torch.zeros(traces.shape), self.train_noise_std * torch.ones(traces.shape))
-                inp = traces + noise.to(device=traces.device)
+                inp = inp + noise.to(device=traces.device)
             else:
-                inp = traces
+                inp = inp
+
             # return input, target
-            target = traces
+            target = copy.deepcopy(traces)
             return inp, target
 
         # CASE: Flipping
@@ -186,22 +203,30 @@ class MyTransformer(nn.Module):
             target==3: mirror and reverser (-1*input.flip(dim=-1))
             """
             # parameter
-            n_fips = 4
+            num_flips = 4
             batch_size = traces.shape[0]
 
             # flipping function
-            f0 = lambda x: x
-            f1 = lambda x: -x
-            f2 = lambda x: x.flip(-1)
-            f3 = lambda x: -x.flip(-1)
+            def f0(x):
+                return x
+
+            def f1(x):
+                return -x
+
+            def f2(x):
+                return x.flip(-1)
+
+            def f3(x):
+                return -x.flip(-1)
 
             # get targets
-            m = torch.distributions.categorical.Categorical(1 / n_fips * torch.ones(batch_size, self.N_LEADS, n_fips))
+            m = torch.distributions.categorical.Categorical(
+                1 / num_flips * torch.ones(batch_size, self.N_LEADS, num_flips))
             target = m.sample()
 
             # flip input according to target
-            inp = traces
-            for flip_nr in range(n_fips):
+            inp = copy.deepcopy(traces)
+            for flip_nr in range(num_flips):
                 idx = (target == flip_nr).nonzero()
                 i = idx[:, 0]
                 j = idx[:, 1]

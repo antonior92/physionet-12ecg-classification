@@ -134,7 +134,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--init_std', type=float, default=0.02,
                                help='standard deviation of normal initialization. Default is 0.02.')
     # training types for transformer
-    config_parser.add_argument('--trans_train_type', type=str, default='flipping',
+    config_parser.add_argument('--trans_train_type', choices=['masking', 'flipping'], default='masking',
                                help='Type of transformer training type: masking (default), flipping')
     config_parser.add_argument('--train_noise_std', type=float, default=0.0,
                                help='Standard deviation of Gaussian noise on transformer input for training. '
