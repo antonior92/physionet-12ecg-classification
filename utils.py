@@ -127,7 +127,7 @@ def check_pretrain_model(folder, do_print=True):
         pretrain_train_ids = []
         pretrain_valid_ids = []
         if do_print:
-            tqdm.write("Did not found pretrained model!")
+            tqdm.write("Did not find pretrained model!")
 
     pretrain_ids = (pretrain_train_ids, pretrain_valid_ids)
     return config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids

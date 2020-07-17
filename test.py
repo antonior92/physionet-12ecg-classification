@@ -25,6 +25,8 @@ if __name__ == '__main__':
     # Learning parameters
     config_parser.add_argument('--sample_freq', type=int, default=400,
                                help='sample frequency (in Hz) in which all traces will be resampled at (default: 400)')
+    config_parser.add_argument('--batch_size', type=int, default=128,
+                               help='batch size, higher for testing (default: 128).')
     config_parser.add_argument('--test_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during testing.')
     args, rem_args = config_parser.parse_known_args()
@@ -60,7 +62,6 @@ if __name__ == '__main__':
     with open(config, 'r') as f:
         config_dict = json.load(f)
     # write some parameters of config_dict to args
-    args.batch_size = config_dict['batch_size']
     args.seq_length = config_dict['seq_length']
     args.seed = config_dict['seed']
     args.n_total = config_dict['n_total']

@@ -140,3 +140,4 @@ dmypy.json
 /server/*
 /evaluation_transformer/
 /mdl*
+/driver_test_folder/*
