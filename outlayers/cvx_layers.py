@@ -6,7 +6,7 @@ import torch
 import numpy as np
 
 
-class CVXSoftmaxLayer(abc.ABC):
+class CVXSoftmaxLayer(AbstractOutLayer):
 
     EPS = 1e-4
 

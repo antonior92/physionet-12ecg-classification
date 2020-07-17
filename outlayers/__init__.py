@@ -7,7 +7,7 @@ from .dx_map import DxMap
 __all__ = ['DxMap', 'collapse', 'get_collapse_fun', 'outlayer_from_str']
 
 
-def outlayer_from_str(str)
+def outlayer_from_str(str):
     if str == 'softmax':
         return ReducedSoftmaxLayer()
     elif str == 'sigmoid':

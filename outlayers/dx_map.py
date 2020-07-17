@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class DxMap(object):
 
     def __init__(self, classes, idx, subidx):
@@ -25,7 +26,7 @@ class DxMap(object):
         return new_target
 
     def prepare_probabilities(self, prob, classes, layer):
-        new_prob = np.zeros(list(prob.shape[:-1]) + [len(classes)], dtype=y.dtype)
+        new_prob = np.zeros(list(prob.shape[:-1]) + [len(classes)], dtype=prob.dtype)
         for i, c in enumerate(classes):
             if c in self.classes:
                 new_prob[..., i] = layer.get_item(prob, self.class_to_idx[c], self.class_to_subidx[l])

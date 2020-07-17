@@ -1,7 +1,8 @@
 import torch
+from .abstract_out_layer import AbstractOutLayer
 
 
-class ConcatenatedLayer(object):
+class ConcatenatedLayer(AbstractOutLayer):
     def __init__(self, layers, lengths):
         self.layers = layers
         self.lengths = lengths

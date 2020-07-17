@@ -4,6 +4,7 @@ import argparse
 import torch
 import datetime
 import random
+import itertools
 import pandas as pd
 import torch.nn as nn
 from warnings import warn
@@ -337,16 +338,35 @@ if __name__ == '__main__':
     train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
     valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
     # Compute number of training set classes
-    n_train_classes = len(train_classes) - sum([len(a) - 1 for a in alias])
     # Get outlayer from string
-    out_layer = outlayer_from_str(args.out)
+    out_layer = outlayer_from_str(args.outlayer)
     # Get all idx subidx for training classes
-    # TODO: 1. set ids and subids to classes that are aliased; 2. use thresholds and proportions;
-    idx = [i for _ in range(m) for i, m in enumerate(out_layer.maximum_target(n_train_classes))]
-    subidx = [i for i in range(m) for m in enumerate(out_layer.maximum_target(n_train_classes))]
+    outlayer_len = len(train_classes) - sum([len(a) - 1 for a in alias])
+    idx = list(itertools.chain(*[[i for _ in range(m)]
+                                 for i, m in enumerate(out_layer.maximum_target(outlayer_len))]))
+    subidx = list(itertools.chain(*[[j for j in range(m)]
+                                    for m in out_layer.maximum_target(outlayer_len)]))
+    # Deal with alias groups
+    for alias_group in alias:
+        index = [train_classes.index(a) for a in alias_group]
+        index.sort()
+        i = idx[index[0]]
+        j = subidx[index[0]]
+        for k in index[1:]:
+            idx.insert(k, i)
+            subidx.insert(k, j)
     # Define map between last layer and output
     isin = np.isin(train_classes, valid_classes)  # Filter according to valid classes
-    dx = DxMap(train_classes[isin], idx[isin], subidx[isin])
+    dx = DxMap(np.array(train_classes)[isin], np.array(idx, dtype=int)[isin], np.array(subidx, dtype=int)[isin])
+    tqdm.write("Done!")
+
+    tqdm.write("Define threshold ...")
+    # Get occurences
+    train_classes_occurence = dset.get_ocurrences(train_classes)
+    # TODO: fix dx.prepare_probabilities / layer.get_item
+    ocurrences_corrected_for_alias = dx.prepare_probabilities(train_classes_occurence, train_classes, out_layer)
+    tqdm.write("\t frequencies = train_ocurrences / train_samples (for each abnormality)")
+    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -365,11 +385,7 @@ if __name__ == '__main__':
                .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
     tqdm.write("Done!")
 
-    tqdm.write("Define threshold ...")
-    threshold = dx.compute_threshold(dset, train_ids)
-    tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
-    tqdm.write("Done!")
+
 
     tqdm.write("Define model...")
     model = get_model(vars(args), len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)

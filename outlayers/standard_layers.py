@@ -20,18 +20,20 @@ class SoftmaxLayer(AbstractOutLayer):
     def get_prediction(self, score):
         return score.argmax(axis=-1)
 
-
     def __str__(self):
         return self.STR
 
     def __repr__(self):
         return self.STR
 
+    def get_item(self, score, _, subidx):
+        return score[:, subidx]
 
 
 class ReducedSoftmaxLayer(AbstractOutLayer):
 
     STR = "softmax"
+    NULL_TARGET = 0
 
     def _add_zero(self, logits):
         return torch.cat((torch.zeros(logits.size(0), 1), logits), dim=1)
@@ -62,18 +64,18 @@ class ReducedSoftmaxLayer(AbstractOutLayer):
     def __repr__(self):
         return self.STR
 
-    @classmethod
-    def from_str(cls, str):
-        if str == self.STR:
-            return cls()
+    def get_item(self, score, _, subidx):
+        if subidx != self.NULL_TARGET:
+            return score[:, subidx]
         else:
-            raise ValueError('Unknown string')
-
+            return 1 - score.sum(axis=1)
 
 
 class SigmoidLayer(AbstractOutLayer):
 
     STR = "sigmoid"
+    NULL_TARGET = None
+
 
     def __call__(self, logits):
         return torch.sigmoid(logits)
@@ -94,9 +96,8 @@ class SigmoidLayer(AbstractOutLayer):
     def __repr__(self):
         return "sigmoid"
 
-    @classmethod
-    def (cls, str):
-        if str == 'softmax':
-            return cls()
+    def get_item(self, score, idx, subidx):
+        if subidx != self.NULL_TARGET:
+            return score[:, idx]
         else:
-            raise ValueError('Unknown string')
+            return 1 - score.sum(axis=1)
