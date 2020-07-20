@@ -1,6 +1,5 @@
-from .standard_layers import SigmoidLayer, SoftmaxLayer, ReducedSoftmaxLayer
+from .output_layers import SigmoidLayer, SoftmaxLayer, ReducedSoftmaxLayer, ConcatenatedLayer
 from .cvx_layers import CVXSoftmaxLayer
-from .concatenated_layers import ConcatenatedLayer
 from .collapse import collapse, get_collapse_fun
 from .dx_map import DxMap
 

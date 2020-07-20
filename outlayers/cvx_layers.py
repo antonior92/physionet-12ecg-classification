@@ -1,7 +1,7 @@
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
 import torch.nn.functional as F
-from .abstract_out_layer import AbstractOutLayer
+from .output_layers import AbstractOutLayer
 import torch
 import numpy as np
 
@@ -28,26 +28,15 @@ class CVXSoftmaxLayer(AbstractOutLayer):
 
     def loss(self, logits, target):
         score = torch.log(self(logits))
-        return F.nll_loss(score, target, reduction='sum')
+        return F.nll_loss(score, target.flatten(), reduction='sum')
 
-    def maximum_target(self, logits_len):
-        return [logits_len - 1]
-
-    def get_prediction(self, score):
-        return score.argmax(axis=-1)
+    def get_target_structure(self, logits_len):
+        return [logits_len - 1], [None]
 
     def __str__(self):
         return "cvx_softmax_{}".format(self.size)
 
     def __repr__(self):
         return "cvx_softmax_{}".format(self.size)
-
-    @classmethod
-    def from_str(cls, str):
-        if "cvx_softmax_" in str and str.split("cvx_softmax_")[-1].isnumeric():
-            size = str.split("cvx_softmax_")[-1]
-            return cls(size)
-        else:
-            raise ValueError('Unknown string')
 
 

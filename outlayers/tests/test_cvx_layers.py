@@ -54,8 +54,37 @@ class TestCVXSoftmax(unittest.TestCase):
         l = torch.sum((yc - 1)**2)
         # backward
         l.backward()
-        assert_array_almost_equal(yc.detach().numpy(), yn.detach().numpy())
-        assert_array_almost_equal(xc.grad.detach().numpy(), xn.grad.detach().numpy())
+        assert_array_almost_equal(yc.detach().numpy(), yn.detach().numpy(), decimal=4)
+        assert_array_almost_equal(xc.grad.detach().numpy(), xn.grad.detach().numpy(), decimal=4)
+
+    def test_output(self):
+        bs = 32
+        size = 4
+        softmax = CVXSoftmaxLayer(size)
+        logits = torch.ones((bs, size), dtype=torch.float32)
+        out = softmax(logits)
+        assert_array_almost_equal(out.numpy(), 1/size*torch.ones((bs, size)).numpy())
+
+    def test_loss(self):
+        bs = 32
+        size = 4
+        softmax = CVXSoftmaxLayer(size)
+        logits = torch.ones((bs, size), dtype=torch.float32)
+        target = torch.ones((bs, 1), dtype=torch.long)
+        target2 = torch.arange(0, bs, dtype=torch.long)[:, None] % size
+        l = softmax.loss(logits, target)
+        l2 = softmax.loss(logits, target2)
+        self.assertEqual(l, l2)
+
+    def test_get_targe_structure(self):
+        bs = 32
+        size = 4
+        softmax = CVXSoftmaxLayer(size)
+        max_targets, null_positions = softmax.get_target_structure(size)
+
+        self.assertEqual(max_targets, [size-1])
+        self.assertTrue(len(null_positions) == 1)
+        self.assertTrue(null_positions[0] is None)
 
 
 if __name__ == '__main__':
