@@ -26,18 +26,18 @@ def execute(trial):
     #os.chdir(main_path)
     
     #pretrain.py setup
-    pre_set_up = ('python pretrain.py --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    '''pre_set_up = ('python pretrain.py --cuda --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
         '--lr_factor {}'.format(trial.suggest_loguniform('pre_lr_factor',0.0001,1)), 
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
-        '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))
+        '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
-    train_set_up =('python train.py --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
         '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)))
     
     #pretrain comand
-    pre_cmd = " ".join(pre_set_up)
+    #pre_cmd = " ".join(pre_set_up)
     #subp.check_call(pre_cmd, shell=True)s
     #os.system(pre_cmd) primeiro teste na gpu do dce
     
@@ -77,16 +77,16 @@ def del_unworthy_trials(dir_name, best_iter):
 
 #defining search space
 search_space = {
-    'pre_lr':[0.01],
-    'pre_lr_factor':[0.1],
-    'pre_dropout_rate':[0.2],
-    'pre_num_heads':[2],
-    'pre_emb_size':[50],
     'kernel_size': [9,15,17],
     'dropout_rate': [0.2,0.5,0.8]
 }
+    #'pre_lr':[0.01],
+    #'pre_lr_factor':[0.1],
+    #'pre_dropout_rate':[0.2],
+    #'pre_num_heads':[2],
+    #'pre_emb_size':[50],
 #creates gridsearch folder
-if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) == False:
+if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) != False:
         os.mkdir('outputs gridsearch')
 
 #calculates number of trials
