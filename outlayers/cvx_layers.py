@@ -1,3 +1,4 @@
+from .output_encoding import OutputEncoding
 import cvxpy as cp
 from cvxpylayers.torch import CvxpyLayer
 import torch.nn.functional as F
@@ -30,8 +31,11 @@ class CVXSoftmaxLayer(AbstractOutLayer):
         score = torch.log(self(logits))
         return F.nll_loss(score, target.flatten(), reduction='sum')
 
-    def get_target_structure(self, logits_len):
-        return [logits_len - 1], [None]
+    def get_output_encoding(self, logits_len):
+        return OutputEncoding([logits_len - 1], [None])
+
+    def get_prediction(self, score):
+        return score.argmax(axis=-1)[:, None]
 
     def __str__(self):
         return "cvx_softmax_{}".format(self.size)

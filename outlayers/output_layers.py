@@ -1,6 +1,10 @@
 import abc
 import torch
 import torch.nn.functional as F
+import numpy as np
+from .output_encoding import OutputEncoding
+
+
 
 
 class AbstractOutLayer(abc.ABC):
@@ -31,15 +35,10 @@ class AbstractOutLayer(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_target_structure(self, logits_len):
+    def get_output_encoding(self, logits_len):
         """Returns the maximum value target is allowed to assume.
 
-        The function signature is `maximum_target(logits_len: int) -> max_target, null_positions`.
-        where both `max_target` and `null_positions` are list of the same length length,
-        such that  `shape(target) = (bs, len(max_target)) = (bs, len(null_positions)) `
-
-        Here the output `max_target` is such that  `0 <= target[:, i] <= max_target[i]` and
-         .
+        The function signature is `maximum_target(logits_len: int) -> OutputEncoding`.
         """
         pass
 
@@ -48,7 +47,23 @@ class AbstractOutLayer(abc.ABC):
         return self._str()
 
     def __str__(self):
-        return self._str()
+        return self.__repr__()
+
+    # TODO: I still find it not very elegant to have some function acting over
+    #  numpy arrays and other over torch tensors within the same class. Might be a good idea to
+    #  move this function to OutputEncoding
+    @abc.abstractmethod
+    def get_prediction(self, score):
+        """ Get most likely prediction out of the score function.
+
+        Here `score` has the same shape (bs, logits_len) but can assume only values in (0, 1),
+        and can be interpreted as probabilities. The output, prediction, on the other hand, has
+        shape (bs, target_len). The prediction is an object similar to `target`, but predicted
+        by the model (rather than observed in the dataset).
+
+        IMPORTANT: input and outputs are numpy arrays!!
+        """
+        pass
 
 
 class SoftmaxLayer(AbstractOutLayer):
@@ -60,8 +75,11 @@ class SoftmaxLayer(AbstractOutLayer):
         score = F.log_softmax(logits, dim=-1)
         return F.nll_loss(score, target.flatten(), reduction='sum')
 
-    def get_target_structure(self, logits_len):
-        return [logits_len - 1], [None]
+    def get_output_encoding(self, logits_len):
+        return OutputEncoding([logits_len - 1], [None])
+
+    def get_prediction(self, score):
+        return score.argmax(axis=-1)[:, None]
 
     def __repr__(self):
         return "standard_softmax"
@@ -85,8 +103,12 @@ class ReducedSoftmaxLayer(AbstractOutLayer):
         score = F.log_softmax(extended_logits, dim=-1)
         return F.nll_loss(score, target.flatten(), reduction='sum')
 
-    def get_target_structure(self, logits_len):
-        return [logits_len], [0]
+    def get_output_encoding(self, logits_len):
+        return OutputEncoding([logits_len], [0])
+
+    def get_prediction(self, score):
+        complete_score = np.hstack([1 - np.sum(score, axis=1, keepdims=True), score])
+        return complete_score.argmax(axis=-1)[:, None]
 
     def __repr__(self):
         return "softmax"
@@ -101,8 +123,11 @@ class SigmoidLayer(AbstractOutLayer):
         score = self(logits)
         return F.binary_cross_entropy(score, target, reduction='sum')
 
-    def get_target_structure(self, logits_len):
-        return [1] * logits_len, [0] * logits_len
+    def get_output_encoding(self, logits_len):
+        return OutputEncoding([1] * logits_len, [0] * logits_len)
+
+    def get_prediction(self, score):
+        return np.array(score > 0.5, dtype=np.long)
 
     def __repr__(self):
         return "sigmoid"
@@ -142,7 +167,7 @@ class ConcatenatedLayer(AbstractOutLayer):
             loss += layer.loss(logits, targets)
         return loss
 
-    def get_target_structure(self, logits_len):
+    def get_output_encoding(self, logits_len):
         if logits_len != sum(self.lengths):
             raise ValueError('Invalid length')
         max_targets = []
@@ -151,7 +176,14 @@ class ConcatenatedLayer(AbstractOutLayer):
             max_target, null_position = layer.maximum_target(length)
             max_targets += max_target
             null_positions += null_position
-        return max_targets, null_position
+        return OutputEncoding(max_targets, null_positions)
+
+    def get_prediction(self, score):
+        score_components = self._get_components(score, self.lengths)
+        pred = []
+        for layer, score_i in zip(self.layers, score_components):
+            pred.append(layer.get_predictions(score_i))
+        return np.concatenate(pred, axis=-1)
 
     def __repr__(self):
         return 'concat:' + '-'.join(['{}:{}'.format(layer, length) for layer, length in zip(self.layers, self.lengths)])

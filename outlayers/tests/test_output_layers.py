@@ -27,11 +27,17 @@ class TestSoftmax(unittest.TestCase):
         self.assertEqual(l, l2)
 
     def test_get_targe_structure(self):
-        max_targets, null_positions = self.softmax.get_target_structure(10)
-
+        oe = self.softmax.get_output_encoding(10)
+        max_targets, null_positions = oe.max_targets, oe.null_targets
         self.assertEqual(max_targets, [9])
         self.assertTrue(len(null_positions) == 1)
         self.assertTrue(null_positions[0] is None)
+
+    def test_get_prediction(self):
+        score = np.array([[0.1, 0.2, 0.3, 0.4],
+                          [0.05, 0.9, 0.05, 0]])
+        pred = self.softmax.get_prediction(score)
+        assert_array_almost_equal(pred, [[3], [1]])
 
 
 class TestReducedSoftmax(unittest.TestCase):
@@ -64,10 +70,17 @@ class TestReducedSoftmax(unittest.TestCase):
         self.assertEqual(l, l2)
 
     def test_get_targe_structure(self):
-        max_targets, null_positions = self.softmax.get_target_structure(10)
-
+        oe = self.softmax.get_output_encoding(10)
+        max_targets, null_positions = oe.max_targets, oe.null_targets
         self.assertEqual(max_targets, [10])
         self.assertTrue(null_positions, [0])
+
+    def test_get_prediction(self):
+        score = np.array([[0.2, 0.3, 0.4],
+                          [0.9, 0.05, 0],
+                          [0.1, 0.05, 0]])
+        pred = self.softmax.get_prediction(score)
+        assert_array_almost_equal(pred, [[3], [1], [0]])
 
 
 class TestSigmoid(unittest.TestCase):
@@ -92,11 +105,19 @@ class TestSigmoid(unittest.TestCase):
         self.assertEqual(l, l2)
 
     def test_get_targe_structure(self):
-        max_targets, null_positions = self.sigmoid.get_target_structure(10)
-
+        oe = self.sigmoid.get_output_encoding(10)
+        max_targets, null_positions = oe.max_targets, oe.null_targets
         self.assertEqual(max_targets, [1]*10)
         self.assertTrue(null_positions, [0]*10)
 
+    def test_get_prediction(self):
+        score = np.array([[0.2, 0.3, 0.4],
+                          [0.9, 0.05, 0],
+                          [0.1, 0.05, 0]])
+        pred = self.sigmoid.get_prediction(score)
+        assert_array_almost_equal(pred, [[0, 0, 0],
+                                         [1, 0, 0],
+                                         [0, 0, 0]])
 
 if __name__ == '__main__':
     unittest.main()

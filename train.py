@@ -4,7 +4,6 @@ import argparse
 import torch
 import datetime
 import random
-import itertools
 import pandas as pd
 import torch.nn as nn
 from warnings import warn
@@ -340,33 +339,16 @@ if __name__ == '__main__':
     # Compute number of training set classes
     # Get outlayer from string
     out_layer = outlayer_from_str(args.outlayer)
-    # Get all idx subidx for training classes
-    outlayer_len = len(train_classes) - sum([len(a) - 1 for a in alias])
-    idx = list(itertools.chain(*[[i for _ in range(m)]
-                                 for i, m in enumerate(out_layer.maximum_target(outlayer_len))]))
-    subidx = list(itertools.chain(*[[j for j in range(m)]
-                                    for m in out_layer.maximum_target(outlayer_len)]))
-    # Deal with alias groups
-    for alias_group in alias:
-        index = [train_classes.index(a) for a in alias_group]
-        index.sort()
-        i = idx[index[0]]
-        j = subidx[index[0]]
-        for k in index[1:]:
-            idx.insert(k, i)
-            subidx.insert(k, j)
-    # Define map between last layer and output
-    isin = np.isin(train_classes, valid_classes)  # Filter according to valid classes
-    dx = DxMap(np.array(train_classes)[isin], np.array(idx, dtype=int)[isin], np.array(subidx, dtype=int)[isin])
+    dx = DxMap.infer_from_out_layer(train_classes, out_layer, alias)
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
     # Get occurences
     train_classes_occurence = dset.get_ocurrences(train_classes)
-    # TODO: fix dx.prepare_probabilities / layer.get_item
-    ocurrences_corrected_for_alias = dx.prepare_probabilities(train_classes_occurence, train_classes, out_layer)
-    tqdm.write("\t frequencies = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
+    # TODO: allow to correct for occurences (i.e. divide probabilities by it)
+    tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
+    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:}({:.3f})".format(c, o, o / len(dset))
+                                          for c, o in zip(train_classes, train_classes_occurence)]))
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -384,8 +366,6 @@ if __name__ == '__main__':
     tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
                .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
     tqdm.write("Done!")
-
-
 
     tqdm.write("Define model...")
     model = get_model(vars(args), len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)
@@ -410,14 +390,12 @@ if __name__ == '__main__':
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))
         # Get zero one prediction
-        y_pred_aux = dx.apply_threshold(y_score, threshold)
-        y_pred = dx.target_to_binaryclass(y_pred_aux)
-        y_pred = dx.reorganize(y_pred, valid_classes, prob=False)
-        y_score = dx.reorganize(y_score, valid_classes, prob=True)
+        y_pred_aux = out_layer.get_prediction(y_score)
+        y_pred = dx.prepare_target(y_pred_aux, valid_classes)
+        y_score = dx.prepare_probabilities(y_score, valid_classes)
         # Get metrics
-        y_true = dx.target_to_binaryclass(all_targets)
-        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-        y_true = dx.reorganize(y_true, valid_classes)
+        _, y_true = collapse(all_targets, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
+        y_true = dx.prepare_target(y_true, valid_classes)
         metrics = get_metrics(y_true, y_pred, y_score)
         # Get learning rate
         for param_group in optimizer.param_groups:
@@ -442,7 +420,6 @@ if __name__ == '__main__':
         if best_challenge_metric < metrics['challenge_metric']:
             # Save model
             torch.save({'epoch': ep,
-                        'threshold': threshold,
                         'model': model.state_dict(),
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'model.pth'))

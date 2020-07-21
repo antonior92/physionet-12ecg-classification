@@ -114,7 +114,7 @@ class ECGBatchloader(abc.Iterable):
             traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32) for s in batch], dim=0)
             if dx is not None:
                 target = torch.stack(
-                    [torch.tensor(dx.get_target_from_labels(s['labels']), dtype=torch.long) for s in batch], dim=0)
+                    [torch.tensor(dx.target_from_labels(s['labels']), dtype=torch.long) for s in batch], dim=0)
             ids = [s['id'] for s in batch]
             sub_ids = [s['sub_id'] for s in batch]
             if dx is not None:
