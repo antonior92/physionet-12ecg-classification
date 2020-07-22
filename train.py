@@ -293,7 +293,7 @@ if __name__ == '__main__':
         tqdm.write("Did not found pretrained model!")
 
     tqdm.write("Define dataset...")
-    dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    dset = ECGDataset.from_folder(settings.input_folder, freq=args.sample_freq)
     tqdm.write("Done!")
 
     tqdm.write("Define train and validation splits...")
@@ -322,6 +322,9 @@ if __name__ == '__main__':
         f.write(','.join(train_ids))
     with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
+    # Get dataset
+    train_dset = dset.get_subdataset(train_ids)
+    valid_dset = dset.get_subdataset(valid_ids)
     tqdm.write("Done!")
 
     tqdm.write("Define output layer...")
@@ -344,7 +347,7 @@ if __name__ == '__main__':
 
     tqdm.write("Define threshold ...")
     # Get occurences
-    train_classes_occurence = dset.get_ocurrences(train_classes)
+    train_classes_occurence = dset.get_occurrences(train_classes)
     # TODO: allow to correct for occurences (i.e. divide probabilities by it)
     tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
     tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:}({:.3f})".format(c, o, o / len(dset))
@@ -358,9 +361,9 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
-    train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size,
+    train_loader = ECGBatchloader(train_dset, dx, batch_size=args.batch_size,
                                   length=args.seq_length, seed=args.seed)
-    valid_loader = ECGBatchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
+    valid_loader = ECGBatchloader(valid_dset, dx, batch_size=args.batch_size, length=args.seq_length)
     tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
                .format(n_train, 100 * n_train / n_total, len(train_loader))),
     tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"

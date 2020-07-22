@@ -100,14 +100,15 @@ def get_batches(batch_size, ids, counts, drop_last=False):
 
 
 class ECGBatchloader(abc.Iterable):
-    def __init__(self, dset, ids, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False,
+    def __init__(self, dset, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False,
                  seed=0):
         self.dset = dset
+        self.ids = dset.get_ids()
         if min_length is None:
             min_length = length // 2
         self.transformation = lambda s: SplitLongSignals(s, length, min_length)
         dset.use_only_header(True)
-        counts = [len(self.transformation(s)) for s in dset[ids]]
+        counts = [len(self.transformation(s)) for s in dset[self.ids]]
         dset.use_only_header(False)
 
         def collapsing_fn(batch):
@@ -123,7 +124,6 @@ class ECGBatchloader(abc.Iterable):
                 return (traces, ids, sub_ids)
 
         self.collapsing_fn = collapsing_fn
-        self.ids = ids
         self.counts = counts
         self.batch_size = batch_size
         self.drop_last = drop_last
