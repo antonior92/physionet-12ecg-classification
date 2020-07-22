@@ -2,7 +2,7 @@ import numpy as np
 
 
 class DxMap(object):
-    # TODO: include testing
+    """Map between classes and output layer."""
 
     @classmethod
     def infer_from_out_layer(cls, classes, out_layer, alias=None):
@@ -39,6 +39,7 @@ class DxMap(object):
         return target
 
     def prepare_target(self, target, classes):
+        target = np.array(target, dtype=int)
         new_target = np.zeros(list(target.shape[:-1]) + [len(classes)], dtype=target.dtype)
         for i, c in enumerate(classes):
             if c in self.classes:
@@ -46,12 +47,13 @@ class DxMap(object):
                 c2p = self.class_to_pair[c] if isinstance(self.class_to_pair[c], list) else [self.class_to_pair[c]]
                 # assign target from labels
                 idx, subidx = c2p[0]
-                new_target[..., i] = target[idx] == subidx
+                new_target[..., i] = target[..., idx] == subidx
                 for idx, subidx in c2p[1:]:
-                    new_target[..., i] *= target[idx] == subidx
+                    new_target[..., i] *= target[..., idx] == subidx
         return new_target
 
     def prepare_probabilities(self, prob, classes):
+        prob = np.array(prob, dtype=float)
         bs, score_len = prob.shape
         new_prob = np.zeros((bs, len(classes)), dtype=prob.dtype)
         for i, c in enumerate(classes):
@@ -59,19 +61,22 @@ class DxMap(object):
                 c2p = self.class_to_pair[c] if isinstance(self.class_to_pair[c], list) else [self.class_to_pair[c]]
 
                 pair = c2p[0]
-                if self.enc.is_null(pair):
+                if not self.enc.is_null(pair):
                     index = self.enc.dict_from_pair_to_indice[pair]
                     new_prob[:, i] = prob[:, index]
                 else:
-                    indices = self.enc.get_no_null_subidx(pair[0])
-                    new_prob[:, i] = prob[:, indices].sum(axis=-1)
-
+                    idx, _ = pair
+                    subidx = self.enc.get_no_null_subidx(idx)
+                    indices = [self.enc.dict_from_pair_to_indice[(idx, si)] for si in subidx]
+                    new_prob[:, i] = 1 - prob[:, indices].sum(axis=-1)
                 for pair in c2p[1:]:
-                    if self.enc.is_null(pair):
+                    if not self.enc.is_null(pair):
                         index = self.enc.dict_from_pair_to_indice[pair]
                         new_prob[:, i] *= prob[:, index]
                     else:
-                        indices = self.enc.get_no_null_subidx(pair[0])
+                        idx, _ = pair
+                        subidx = self.enc.get_no_null_subidx(idx)
+                        indices = [self.enc.dict_from_pair_to_indice[(idx, si)] for si in subidx]
                         new_prob[:, i] *= 1 - prob[:, indices].sum(axis=-1)
         return new_prob
 
