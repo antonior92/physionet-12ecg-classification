@@ -179,6 +179,11 @@ if __name__ == '__main__':
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--dont_shuffle', action='store_true',
                                help='dont shuffle training samples each epoch.')
+    config_parser.add_argument('--expected_class_distribution', choices=['uniform', 'train'], default='uniform',
+                               help="The expected distribution of classes. If 'uniform' consider uniform distribution."
+                                    "If 'train' consider the distribution observed in the training dataset."
+                                    "The classifier will be corrected to account for this prior information"
+                                    "on the distribution of the classes.")
     config_parser.add_argument('--epochs', type=int, default=200,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
@@ -347,11 +352,21 @@ if __name__ == '__main__':
 
     tqdm.write("Define threshold ...")
     # Get occurences
-    train_classes_occurence = dset.get_occurrences(train_classes)
-    # TODO: allow to correct for occurences (i.e. divide probabilities by it)
     tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:}({:.3f})".format(c, o, o / len(dset))
-                                          for c, o in zip(train_classes, train_classes_occurence)]))
+    tqdm.write("\t\t\t   = " + ', '.join(
+        ["{:}:{:}({:.3f})".format(c, o, o / len(train_dset))
+         for c, o in zip(train_classes, occurrences)]
+    ))
+    train_dset = train_dset.use_only_header(True)
+    occurrences = dx.prepare_target(np.vstack([dx.target_from_labels(sample['labels']) for sample in train_dset]))
+    train_dset = train_dset.use_only_header(False)
+    fraction = occurrences.sum(axis=0) / occurrences.shape[0]
+    if args.expected_class_distribution == 'uniform':
+        expected_fraction = 1 / sum(fraction > 0) * np.array(fraction > 0, dtype=float)
+    elif args.expected_class_distribution == 'train':
+        expected_fraction = fraction
+    correction_factor = np.nan_to_num(expected_fraction / fraction, nan=0, posinf=0, neginf=0)
+
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -392,6 +407,8 @@ if __name__ == '__main__':
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
         # Collapse entries with the same id:
         unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))
+        # Correct for class imbalance
+        y_score = y_score * correction_factor
         # Get zero one prediction
         y_pred_aux = out_layer.get_prediction(y_score)
         y_pred = dx.prepare_target(y_pred_aux, valid_classes)

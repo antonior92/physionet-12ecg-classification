@@ -184,6 +184,9 @@ class ECGDataset(abc.Sequence):
             print(idx, type(idx))
             raise IndexError('idx = {} ()'.format(idx, type(idx)))
 
+    def __iter__(self):
+        return self[iter(self.get_ids())]
+
     def get_subdataset(self, ids):
         id_to_file = dict(zip(self.get_ids(self.input_file), self.input_file))
         files = [id_to_file[id] for id in ids]

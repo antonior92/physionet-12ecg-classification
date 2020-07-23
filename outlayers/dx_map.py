@@ -38,46 +38,57 @@ class DxMap(object):
                     target[idx] = subidx
         return target
 
-    def prepare_target(self, target, classes):
-        target = np.array(target, dtype=int)
-        new_target = np.zeros(list(target.shape[:-1]) + [len(classes)], dtype=target.dtype)
+    def _get_pairs(self, classes):
+        pairs_list = []
+        indices = []
         for i, c in enumerate(classes):
             if c in self.classes:
-                # convert to list
-                c2p = self.class_to_pair[c] if isinstance(self.class_to_pair[c], list) else [self.class_to_pair[c]]
-                # assign target from labels
-                idx, subidx = c2p[0]
-                new_target[..., i] = target[..., idx] == subidx
-                for idx, subidx in c2p[1:]:
-                    new_target[..., i] *= target[..., idx] == subidx
+                pairs = self.class_to_pair[c] if isinstance(self.class_to_pair[c], list) else[self.class_to_pair[c]]
+                pairs_list.append(pairs)
+                indices.append(i)
+        return indices, pairs_list
+
+    def prepare_target(self, target, classes=None):
+        target = np.array(target, dtype=int)
+        if classes is None:
+            indices = list(range(len(self.enc)))
+            pairs_list = [[p] for p in self.enc.pairs]
+        else:
+            indices, pairs_list = self._get_pairs(classes)
+
+        new_target = np.zeros(list(target.shape[:-1]) + [len(pairs_list)], dtype=target.dtype)
+        for i, pairs in zip(indices, pairs_list):
+            # assign target from labels
+            idx, subidx = pairs[0]
+            new_target[..., i] = target[..., idx] == subidx
+            for idx, subidx in pairs[1:]:
+                new_target[..., i] *= target[..., idx] == subidx
         return new_target
 
     def prepare_probabilities(self, prob, classes):
         prob = np.array(prob, dtype=float)
         bs, score_len = prob.shape
-        new_prob = np.zeros((bs, len(classes)), dtype=prob.dtype)
-        for i, c in enumerate(classes):
-            if c in self.classes:
-                c2p = self.class_to_pair[c] if isinstance(self.class_to_pair[c], list) else [self.class_to_pair[c]]
-
-                pair = c2p[0]
+        indices, pairs_list = self._get_pairs(classes)
+        new_prob = np.zeros((bs, len(pairs_list)), dtype=prob.dtype)
+        for i, pairs in zip(indices, pairs_list):
+            pair = pairs[0]
+            if not self.enc.is_null(pair):
+                index = self.enc.dict_from_pair_to_indice[pair]
+                new_prob[:, i] = prob[:, index]
+            else:
+                idx, _ = pair
+                subidx = self.enc.get_no_null_subidx(idx)
+                indices = [self.enc.dict_from_pair_to_indice[(idx, si)] for si in subidx]
+                new_prob[:, i] = 1 - prob[:, indices].sum(axis=-1)
+            for pair in pairs[1:]:
                 if not self.enc.is_null(pair):
                     index = self.enc.dict_from_pair_to_indice[pair]
-                    new_prob[:, i] = prob[:, index]
+                    new_prob[:, i] *= prob[:, index]
                 else:
                     idx, _ = pair
                     subidx = self.enc.get_no_null_subidx(idx)
                     indices = [self.enc.dict_from_pair_to_indice[(idx, si)] for si in subidx]
-                    new_prob[:, i] = 1 - prob[:, indices].sum(axis=-1)
-                for pair in c2p[1:]:
-                    if not self.enc.is_null(pair):
-                        index = self.enc.dict_from_pair_to_indice[pair]
-                        new_prob[:, i] *= prob[:, index]
-                    else:
-                        idx, _ = pair
-                        subidx = self.enc.get_no_null_subidx(idx)
-                        indices = [self.enc.dict_from_pair_to_indice[(idx, si)] for si in subidx]
-                        new_prob[:, i] *= 1 - prob[:, indices].sum(axis=-1)
+                    new_prob[:, i] *= 1 - prob[:, indices].sum(axis=-1)
         return new_prob
 
     def __len__(self):

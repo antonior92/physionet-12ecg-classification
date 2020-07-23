@@ -1,6 +1,4 @@
-import itertools
-import copy
-
+from copy import copy
 
 class OutputEncoding():
     """Define correpondence between score positions and the target positions and values."""
@@ -22,7 +20,7 @@ class OutputEncoding():
         self.null_targets = null_targets
         self.dict_from_indice_to_pair = dict(zip(indices, pairs))
         self.dict_from_pair_to_indice = dict(zip(pairs, indices))
-        self.pairs = pairs
+        self._pairs = pairs
 
     def __len__(self):
         return len(self.pairs)
@@ -35,3 +33,7 @@ class OutputEncoding():
         m = self.max_targets[idx]
         n = self.null_targets[idx]
         return [i for i in range(m+1) if i != n]
+
+    @property
+    def pairs(self):
+        return copy(self._pairs)

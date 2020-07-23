@@ -108,7 +108,7 @@ class ECGBatchloader(abc.Iterable):
             min_length = length // 2
         self.transformation = lambda s: SplitLongSignals(s, length, min_length)
         dset.use_only_header(True)
-        counts = [len(self.transformation(s)) for s in dset[self.ids]]
+        counts = [len(self.transformation(s)) for s in dset]
         dset.use_only_header(False)
 
         def collapsing_fn(batch):
