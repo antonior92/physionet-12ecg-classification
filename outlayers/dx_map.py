@@ -25,6 +25,21 @@ class DxMap(object):
         self.classes = classes
         self.enc = enc
 
+    @property
+    def classes_at_the_output(self):
+        """Classes available at the neural network output.
+
+        The string '---' is return """
+        classes = []
+        pairs_list = self.enc.pairs
+        pair_to_class = {v: k for k, v in self.class_to_pair.items()}
+        for pair in pairs_list:
+            try:
+                classes.append(pair_to_class[pair])
+            except:
+                classes.append('---')
+        return classes
+
     def target_from_labels(self, labels):
         len_target = len(self.enc.max_targets)
         target = np.zeros(len_target, dtype=int)

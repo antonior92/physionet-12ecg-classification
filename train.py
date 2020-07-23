@@ -351,22 +351,24 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")
+    train_dset = train_dset.use_only_header(True)
+    occurences = dx.prepare_target(np.vstack([dx.target_from_labels(sample['labels']) for sample in train_dset]))
+    train_dset = train_dset.use_only_header(False)
+    n_occurences = occurences.sum(axis=0)
+    fraction = n_occurences / occurences.shape[0]
     # Get occurences
     tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
     tqdm.write("\t\t\t   = " + ', '.join(
-        ["{:}:{:}({:.3f})".format(c, o, o / len(train_dset))
-         for c, o in zip(train_classes, occurrences)]
+        ["{:}:{:d}({:.3f})".format(c, n, f) for c, n, f in zip(dx.classes_at_the_output, n_occurences, fraction)]
     ))
-    train_dset = train_dset.use_only_header(True)
-    occurrences = dx.prepare_target(np.vstack([dx.target_from_labels(sample['labels']) for sample in train_dset]))
-    train_dset = train_dset.use_only_header(False)
-    fraction = occurrences.sum(axis=0) / occurrences.shape[0]
+    # Get classes of interest
     if args.expected_class_distribution == 'uniform':
         expected_fraction = 1 / sum(fraction > 0) * np.array(fraction > 0, dtype=float)
     elif args.expected_class_distribution == 'train':
         expected_fraction = fraction
+    else:
+        raise ValueError('Invalid args.expected_class_distribution.')
     correction_factor = np.nan_to_num(expected_fraction / fraction, nan=0, posinf=0, neginf=0)
-
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
