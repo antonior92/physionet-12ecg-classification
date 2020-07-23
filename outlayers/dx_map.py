@@ -1,4 +1,5 @@
 import numpy as np
+from .output_encoding import OutputEncoding
 
 
 class DxMap(object):
@@ -20,8 +21,27 @@ class DxMap(object):
                     pairs.insert(k, p)
         return cls(classes, pairs, enc)
 
-    def __init__(self, classes, pairs, enc):
-        self.class_to_pair = dict(zip(classes, pairs))
+    @classmethod
+    def from_str(cls, string):
+        lines = string.split('\n')
+        encoding_aux = lines[0]
+        classes_aux, idx_aux, subidx_aux = zip(*[line.split(',') for line in lines[1:]])
+        idx_aux, subidx_aux = [int(i) for i in idx_aux], [int(j) for j in subidx_aux]  # to int
+        unique_classes = list(set(classes_aux))
+
+        pairs_list = []
+        classes = []
+        for c in unique_classes:
+            classes.append(c)
+            pairs = []
+            for l, i, j in zip(classes_aux, idx_aux, subidx_aux):
+                if l == c:
+                    pairs.append((i, j))
+            pairs_list.append(pairs)
+        return cls(classes, pairs_list, OutputEncoding.from_str(encoding_aux))
+
+    def __init__(self, classes, pairs_list, enc):
+        self.class_to_pair = dict(zip(classes, pairs_list))
         self.classes = classes
         self.enc = enc
 
@@ -108,3 +128,14 @@ class DxMap(object):
 
     def __len__(self):
         return len(self.enc)
+
+    def __repr__(self):
+        repr = [str(self.enc)]
+        _, pairs_list = self._get_pairs(self.classes)
+        for c, pairs in zip(self.classes, pairs_list):
+            for idx, subidx in pairs:
+                repr.append('{:},{:},{:}'.format(c, idx, subidx))
+        return '\n'.join(repr)
+
+    def __str__(self):
+        return self.__repr__()

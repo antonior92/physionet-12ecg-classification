@@ -173,7 +173,8 @@ class ConcatenatedLayer(AbstractOutLayer):
         max_targets = []
         null_positions = []
         for layer, length in zip(self.layers, self.lengths):
-            max_target, null_position = layer.maximum_target(length)
+            oe = layer.get_output_encoding(length)
+            max_target, null_position = oe.max_targets, oe.null_targets
             max_targets += max_target
             null_positions += null_position
         return OutputEncoding(max_targets, null_positions)

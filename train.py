@@ -161,7 +161,7 @@ if __name__ == '__main__':
                                help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer', choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
+    config_parser.add_argument('--outlayer', type=str, default='softmax',
                                help='what is the type used for the output layer. Options are '
                                     '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
@@ -221,16 +221,25 @@ if __name__ == '__main__':
     # Get all classes to be scored
     df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
     scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
-    # Get name alias
-    with open(os.path.join(settings.dx, 'alias.txt'), 'r') as f:
-        alias = [x.split(',') for x in f.read().split('\n')]
-    # Get training classes
-    train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
+    # Get classes to be taken under consideration
     valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
-    # Compute number of training set classes
-    # Get outlayer from string
-    out_layer = outlayer_from_str(args.outlayer)
-    dx = DxMap.infer_from_out_layer(train_classes, out_layer, alias)
+    # Get outlayer and map
+    if args.outlayer in ['softmax', 'sigmoid']:
+        # Get output layer classes
+        train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
+        # Get name alias
+        with open(os.path.join(settings.dx, 'alias.txt'), 'r') as f:
+            alias = [x.split(',') for x in f.read().split('\n')]
+        out_layer = outlayer_from_str(args.outlayer)
+        dx = DxMap.infer_from_out_layer(train_classes, out_layer, alias)
+    else:
+        path_to_outmap = os.path.join(settings.dx, args.outlayer + '.txt')
+        if not os.path.isfile(path_to_outmap):
+            raise ValueError('Invalid outlayer')
+        with open(path_to_outmap, 'r') as f:
+            descriptor = f.read()
+        out_layer = outlayer_from_str(descriptor.split('\n')[0])
+        dx = DxMap.from_str('\n'.join(descriptor.split('\n')[1:]).strip())
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")

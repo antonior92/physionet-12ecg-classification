@@ -18,14 +18,8 @@ def outlayer_from_str(str):
         return CVXSoftmaxLayer(size)
     elif 'concat:' in str:
         str = str.split("concat:")[-1]
-        sub_str = [s.split(':') for s in str.split("")[-1].split('-')]
-        lengths = []
-        layers = []
-        for (name, lenght), l in zip(sub_str, self.layers):
-            if not lenght.isnumeric():
-                raise ValueError('Invalid output layer name')
-            layers.append(from_str(name))
-            lengths.append(int(lenght))
+        sub_str = [s.split(':') for s in str.split("concat:")[-1].split('-')]
+        layers, lengths = zip(*[(outlayer_from_str(n), int(l)) for n, l in sub_str])
         return ConcatenatedLayer(layers, lengths)
     else:
-        raise ValueError('Invalid output layer name')
+        raise ValueError('Invalid output layer name {:}'.format(str))

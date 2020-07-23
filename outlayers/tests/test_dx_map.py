@@ -96,6 +96,9 @@ class TestDxMap(unittest.TestCase):
         new_probs = self.dx.prepare_probabilities(probs, ['H'])
         assert_array_almost_equal(new_probs, [[0.9*0.7], [0.1*0.25]])
 
+    def test_repr(self):
+        dx = DxMap.from_str(str(self.dx))
+        self.assertEqual(set(dx.classes), set(self.dx.classes))
 
 if __name__ == '__main__':
     unittest.main()

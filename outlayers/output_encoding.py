@@ -6,6 +6,8 @@ class OutputEncoding():
         # Define one-to-one correpondence between:
         # (idx, subidx) <-> indice
         # Such that `score[:, indice]` correspond to `target[idx] == subidx`
+        max_targets = list(max_targets)
+        null_targets = list(null_targets)
         i = 0
         indices = []
         pairs = []
@@ -33,6 +35,18 @@ class OutputEncoding():
         m = self.max_targets[idx]
         n = self.null_targets[idx]
         return [i for i in range(m+1) if i != n]
+
+    def __repr__(self):
+        return '/'.join('{:}->{:}'.format(n, m) for m, n in zip(self.max_targets, self.null_targets))
+
+    def __str__(self):
+        return self.__repr__()
+
+    @classmethod
+    def from_str(cls, string):
+        null_targets, max_targets = zip(
+            *[[(int(t) if t != 'None' else None) for t in token.split('->')] for token in string.split('/')])
+        return cls(max_targets, null_targets)
 
     @property
     def pairs(self):
