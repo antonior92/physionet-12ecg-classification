@@ -1,6 +1,6 @@
 import math
 import torch.nn as nn
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from torch.nn.modules.transformer import TransformerEncoder, TransformerEncoderLayer
 from models_pretrain.masks_transformer import *
 
 
@@ -88,8 +88,6 @@ class PositionalEncoding(nn.Module):
         Shape:
             x: [sequence length, batch size, embed dim]
             output: [sequence length, batch size, embed dim]
-        Examples:
-            >>> output = pos_encoder(x)
         """
         x = x + self.pe[:x.size(0), :]
         return self.dropout(x)
