@@ -252,7 +252,7 @@ if __name__ == '__main__':
     ))
     # Get classes of interest
     if args.expected_class_distribution == 'uniform':
-        expected_fraction = 1 / sum(fraction > 0) * np.array(fraction > 0, dtype=float)
+        expected_fraction = np.array(fraction > 0, dtype=float)
     elif args.expected_class_distribution == 'train':
         expected_fraction = fraction
     else:
