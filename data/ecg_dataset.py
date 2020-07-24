@@ -117,6 +117,9 @@ class ECGDataset(abc.Sequence):
         self.only_header = only_header
         self.id_to_idx = OrderedDict(zip(self.get_ids(self.input_file), range(len(self))))
 
+        if len(self) == 0:
+            raise ValueError('Dataset is empty.')
+
     def use_only_header(self, only_header=True):
         self.only_header = only_header
         return self

@@ -14,7 +14,7 @@ class DxMap(object):
         # Deal with alias groups
         if alias is not None:
             for alias_group in alias:
-                index = [classes.index(a) for a in alias_group]
+                index = [classes.index(a) for a in alias_group if a in classes]
                 index.sort()
                 p = pairs[index[0]]
                 for k in index[1:]:

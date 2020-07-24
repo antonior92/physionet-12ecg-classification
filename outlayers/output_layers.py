@@ -88,7 +88,7 @@ class SoftmaxLayer(AbstractOutLayer):
 class ReducedSoftmaxLayer(AbstractOutLayer):
 
     def _add_zero(self, logits):
-        return torch.cat((torch.zeros(logits.size(0), 1), logits), dim=1)
+        return torch.cat((torch.zeros(logits.size(0), 1, dtype=logits.dtype, device=logits.device), logits), dim=1)
 
     def _remove_extra_column(self, output):
         return output[..., 1:]

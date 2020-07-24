@@ -227,11 +227,8 @@ if __name__ == '__main__':
     if args.outlayer in ['softmax', 'sigmoid']:
         # Get output layer classes
         train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
-        # Get name alias
-        with open(os.path.join(settings.dx, 'alias.txt'), 'r') as f:
-            alias = [x.split(',') for x in f.read().split('\n')]
         out_layer = outlayer_from_str(args.outlayer)
-        dx = DxMap.infer_from_out_layer(train_classes, out_layer, alias)
+        dx = DxMap.infer_from_out_layer(train_classes, out_layer)
     else:
         path_to_outmap = os.path.join(settings.dx, args.outlayer + '.txt')
         if not os.path.isfile(path_to_outmap):
@@ -260,7 +257,7 @@ if __name__ == '__main__':
         expected_fraction = fraction
     else:
         raise ValueError('Invalid args.expected_class_distribution.')
-    correction_factor = np.nan_to_num(expected_fraction / fraction, nan=0, posinf=0, neginf=0)
+    correction_factor = np.nan_to_num(expected_fraction / fraction)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
