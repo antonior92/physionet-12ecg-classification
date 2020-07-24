@@ -52,7 +52,14 @@ class DxMap(object):
         The string '---' is return """
         classes = []
         pairs_list = self.enc.pairs
-        pair_to_class = {v: k for k, v in self.class_to_pair.items()}
+        pair_to_class = {}
+        for cls, pairs in self.class_to_pair.items():
+            if isinstance(pairs, list):
+                for pair in pairs:
+                    pair_to_class[pair] = cls
+            else:
+                pair = pairs
+                pair_to_class[pair] = cls
         for pair in pairs_list:
             try:
                 classes.append(pair_to_class[pair])

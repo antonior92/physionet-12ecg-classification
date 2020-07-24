@@ -121,7 +121,7 @@ class SigmoidLayer(AbstractOutLayer):
 
     def loss(self, logits, target):
         score = self(logits)
-        return F.binary_cross_entropy(score, target, reduction='sum')
+        return F.binary_cross_entropy(score, target.to(dtype=torch.float32), reduction='sum')
 
     def get_output_encoding(self, logits_len):
         return OutputEncoding([1] * logits_len, [0] * logits_len)
@@ -140,12 +140,12 @@ class ConcatenatedLayer(AbstractOutLayer):
 
     def _get_components(self, x, lengths):
         # Check lenght
-        if x.size(-1) != sum(lengths):
+        if x.shape[-1] != sum(lengths):
             raise ValueError('Dimensions do not match')
         # Compute x
         components = []
         i = 0
-        for l in range(lengths):
+        for l in lengths:
             components.append(x[..., i:i+l])
             i = i + l
         return components
@@ -159,7 +159,8 @@ class ConcatenatedLayer(AbstractOutLayer):
 
     def loss(self, logits, targets):
         logits_components = self._get_components(logits, self.lengths)
-        target_lengths = [len(layer.maximum_target(length)) for layer, length in zip(self.layers, self.lengths)]
+        target_lengths = [len(layer.get_output_encoding(length).max_targets)
+                          for layer, length in zip(self.layers, self.lengths)]
         target_components = self._get_components(targets, target_lengths)
 
         loss = 0
@@ -183,7 +184,7 @@ class ConcatenatedLayer(AbstractOutLayer):
         score_components = self._get_components(score, self.lengths)
         pred = []
         for layer, score_i in zip(self.layers, score_components):
-            pred.append(layer.get_predictions(score_i))
+            pred.append(layer.get_prediction(score_i))
         return np.concatenate(pred, axis=-1)
 
     def __repr__(self):
