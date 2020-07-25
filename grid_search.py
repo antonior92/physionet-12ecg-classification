@@ -26,13 +26,13 @@ def execute(trial):
     #os.chdir(main_path)
     
     #pretrain.py setup
-    '''pre_set_up = ('python pretrain.py --cuda --folder "{}\\outputs_gridsearch\\iteration{}"'.format(main_path,i),
+    '''pre_set_up = ('python pretrain.py --cuda --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
         '--lr_factor {}'.format(trial.suggest_loguniform('pre_lr_factor',0.0001,1)), 
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
-    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}\\outputs_gridsearch\\iteration{}"'.format(main_path,i),
+    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
         '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)))
     
@@ -54,7 +54,7 @@ def execute(trial):
 
 #searches for the best geom_mean in a given csv file
 def geom_mean_searcher(i):
-    history_path="{}\\outputs_gridsearch\\iteration{}\\history.csv".format(main_path,i)
+    history_path="{}/outputs_gridsearch/iteration{}/history.csv".format(main_path,i)
     best_geom_mean=0
     with open(history_path,'r') as csv_file:
         csv_reader = csv.DictReader(csv_file)
@@ -86,7 +86,7 @@ search_space = {
     #'pre_num_heads':[2],
     #'pre_emb_size':[50],
 #creates gridsearch folder
-if os.path.isdir("".join((main_path,'\\outputs_gridsearch'))) != False:
+if os.path.isdir("".join((main_path,'/outputs_gridsearch'))) != False:
         os.mkdir('outputs_gridsearch')
 
 #calculates number of trials
