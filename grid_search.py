@@ -16,23 +16,23 @@ os.chdir(main_path)
 def execute(trial):
     i = trial._trial_id
     if i != 0 :
-        del_unworthy_trials(os.path.join(main_path,'outputs gridsearch'), study.best_trial.number)
+        del_unworthy_trials(os.path.join(main_path,'outputs_gridsearch'), study.best_trial.number)
     
     #create directory for each iteration with a specific name that can later be accessed(removed because pretrain.py and train.py already creates it)
-    #os.chdir("".join((main_path,'\\outputs gridsearch')))
+    #os.chdir("".join((main_path,'\\outputs_gridsearch')))
     #if os.path.exists('iteretion{}'.format(i)):
     #    shutil.rmtree('iteretion{}'.format(i))
     #os.makedirs('iteretion{}'.format(i))
     #os.chdir(main_path)
     
     #pretrain.py setup
-    '''pre_set_up = ('python pretrain.py --cuda --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    '''pre_set_up = ('python pretrain.py --cuda --folder "{}\\outputs_gridsearch\\iteration{}"'.format(main_path,i),
         '--lr {}'.format(trial.suggest_loguniform('pre_lr', 0.0001, 1)), 
         '--lr_factor {}'.format(trial.suggest_loguniform('pre_lr_factor',0.0001,1)), 
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
-    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}\\outputs gridsearch\\iteration{}"'.format(main_path,i),
+    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}\\outputs_gridsearch\\iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
         '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)))
     
@@ -54,7 +54,7 @@ def execute(trial):
 
 #searches for the best geom_mean in a given csv file
 def geom_mean_searcher(i):
-    history_path="{}\\outputs gridsearch\\iteration{}\\history.csv".format(main_path,i)
+    history_path="{}\\outputs_gridsearch\\iteration{}\\history.csv".format(main_path,i)
     best_geom_mean=0
     with open(history_path,'r') as csv_file:
         csv_reader = csv.DictReader(csv_file)
@@ -86,8 +86,8 @@ search_space = {
     #'pre_num_heads':[2],
     #'pre_emb_size':[50],
 #creates gridsearch folder
-if os.path.isdir("".join((main_path,'\\outputs gridsearch'))) != False:
-        os.mkdir('outputs gridsearch')
+if os.path.isdir("".join((main_path,'\\outputs_gridsearch'))) != False:
+        os.mkdir('outputs_gridsearch')
 
 #calculates number of trials
 number_trials=1
@@ -100,7 +100,7 @@ study.optimize(execute, n_trials = number_trials)
 #joblib.dump(study, dump_file_path)
 
 #delete the model of the last iteration if it isnt the best value
-del_unworthy_trials(os.path.join(main_path,'outputs gridsearch'), study.best_trial.number)
+del_unworthy_trials(os.path.join(main_path,'outputs_gridsearch'), study.best_trial.number)
 
 #after executing shows best parameters
 print('\nBest study trial: ',study.best_trial)
