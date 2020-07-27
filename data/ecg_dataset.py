@@ -97,7 +97,9 @@ def get_sample(header_data, data=None, new_freq=None):
 
 
 class ECGDataset(abc.Sequence):
-    def __init__(self, input_folder, freq=500, only_header=False):
+
+    @classmethod
+    def from_folder(cls, input_folder, freq=500, only_header=False):
         # Save input files and folder
         input_files = []
         for root, _, file in os.walk(input_folder):
@@ -106,18 +108,26 @@ class ECGDataset(abc.Sequence):
                 head, tail = os.path.split(f)
                 if os.path.isfile(f) and not tail.lower().startswith('.') and tail.lower().endswith('mat'):
                     input_files.append(os.path.relpath(f, input_folder))
+        return cls(input_files, input_folder, freq, only_header)
+
+    def __init__(self, input_files, input_folder='./', freq=500, only_header=False):
         self.input_file = input_files
         self.input_folder = input_folder
         self.freq = freq
         self.only_header = only_header
-        self.id_to_idx = OrderedDict(zip(self.get_ids(), range(len(self))))
+        self.id_to_idx = OrderedDict(zip(self.get_ids(self.input_file), range(len(self))))
+
+        if len(self) == 0:
+            raise ValueError('Dataset is empty.')
 
     def use_only_header(self, only_header=True):
         self.only_header = only_header
         return self
 
-    def get_ids(self):
-        return [os.path.split(f)[1].split('.mat')[0] for f in self.input_file]
+    def get_ids(self, files=None):
+        if files is None:
+            files = self.input_file
+        return [os.path.split(f)[1].split('.mat')[0] for f in files]
 
     def get_classes(self):
         classes = set()
@@ -127,7 +137,7 @@ class ECGDataset(abc.Sequence):
                 classes.add(l)
         return sorted(classes)
 
-    def get_ocurrences(self, classes):
+    def get_occurrences(self, classes):
         class_to_idx = OrderedDict(zip(classes, range(len(classes))))
         counts = np.zeros(len(classes), dtype=int)
         for idx in range(len(self)):
@@ -177,12 +187,27 @@ class ECGDataset(abc.Sequence):
             print(idx, type(idx))
             raise IndexError('idx = {} ()'.format(idx, type(idx)))
 
+    def __iter__(self):
+        return self[iter(self.get_ids())]
+
+    def get_subdataset(self, ids):
+        id_to_file = dict(zip(self.get_ids(self.input_file), self.input_file))
+        files = [id_to_file[id] for id in ids]
+        return ECGDataset(files, self.input_folder, self.freq, self.only_header)
+
 
 if __name__ == '__main__':
-    dset = ECGDataset('training_data/Training_2')
+    dset = ECGDataset.from_folder('training_data/Training_2')
     print(len(dset))
-    print(len(dset.get_classes()))
+    cls = dset.get_classes()
+    print(len(cls))
+    print(len(dset.get_occurrences(cls)))
 
-
+    sdset = dset.get_subdataset(['Q3090', 'Q3091'])
+    print(len(sdset))
+    scls = sdset.get_classes()
+    print(scls)
+    print(sdset.get_occurrences(scls))
+    print(sdset[:])
 
 

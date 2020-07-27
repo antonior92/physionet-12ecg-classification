@@ -8,13 +8,27 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from data.ecg_dataloader import ECGBatchloader
 from models.resnet import ResNet1d
 from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
                                   compute_challenge_metric)
+from outlayers import collapse, get_collapse_fun
 
+
+def prepare_for_evaluation(dx, out_layer, y_score, all_targets, ids, correction_factor, valid_classes, pred_stage_type):
+    # Collapse entries with the same id:
+    unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type))
+    # Correct for class imbalance
+    y_score = y_score * correction_factor
+    # Get zero one prediction
+    y_pred_aux = out_layer.get_prediction(y_score)
+    y_pred = dx.prepare_target(y_pred_aux, valid_classes)
+    y_score = dx.prepare_probabilities(y_score, valid_classes)
+    # Get metrics
+    _, y_true = collapse(all_targets, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
+    y_true = dx.prepare_target(y_true, valid_classes)
+    return y_true, y_pred, y_score
 
 class GetMetrics(object):
 
@@ -33,6 +47,7 @@ class GetMetrics(object):
         geometric_mean = np.sqrt(f_beta * g_beta)
         return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta,
                 'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
+
 
 def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
@@ -159,13 +174,3 @@ def write_data_ids(folder, train_ids, valid_ids, prefix=''):
     with open(os.path.join(folder, file_name_addon+'valid_ids.txt'), 'w') as f:
         f.write(','.join(valid_ids))
 
-
-def get_dataloaders(dset, data_ids, args, dx=None, seed=None, drop_last=False):
-    data_loader = ECGBatchloader(dset, data_ids, dx, batch_size=args.batch_size,
-                                 length=args.seq_length, seed=seed, drop_last=drop_last)
-    n_data = len(data_ids)
-    n_total = len(dset)
-    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
-               .format(n_data, 100 * n_data / n_total, len(data_loader))),
-
-    return data_loader

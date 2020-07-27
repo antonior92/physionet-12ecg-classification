@@ -7,7 +7,7 @@ import torch.nn as nn
 from torch.nn.utils import clip_grad_norm_
 
 from data import *
-from utils import set_output_folder, get_data_ids, write_data_ids, get_dataloaders
+from utils import set_output_folder, get_data_ids, write_data_ids
 from models_pretrain.transformer_pretrain import MyTransformer
 from models_pretrain.rnn_pretrain import MyRNN
 from models_pretrain.transformerxl_pretrain import MyTransformerXL
@@ -169,20 +169,27 @@ if __name__ == '__main__':
     torch.manual_seed(args.seed)
 
     tqdm.write("Define dataset...")
-    dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    dset = ECGDataset.from_folder(settings.input_folder, freq=args.sample_freq)
     tqdm.write("Done!")
 
     tqdm.write("Define train and validation splits...")
     train_ids, valid_ids = get_data_ids(dset, args)
-    # Save train, valid ids
     write_data_ids(folder, train_ids, valid_ids, prefix='pretrain')
+    # Get dataset
+    train_dset = dset.get_subdataset(train_ids)
+    valid_dset = dset.get_subdataset(valid_ids)
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
     # TODO: double check if drop_last works properly
     drop_last = True if args.pretrain_model.lower() == 'transformerxl' else False
-    train_loader = get_dataloaders(dset, train_ids, args, drop_last=drop_last)
-    valid_loader = get_dataloaders(dset, valid_ids, args, drop_last=drop_last)
+    train_loader = ECGBatchloader(train_dset, batch_size=args.batch_size,
+                                  length=args.seq_length, seed=args.seed)
+    valid_loader = ECGBatchloader(valid_dset, batch_size=args.batch_size, length=args.seq_length)
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(len(train_dset), 100 * len(train_dset) / len(dset), len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(len(valid_dset), 100 * len(valid_dset) / len(dset), len(valid_loader)))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
