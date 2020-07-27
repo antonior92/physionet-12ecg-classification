@@ -157,16 +157,16 @@ if __name__ == '__main__':
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
-    config_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
-                               help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer', type=str, default='softmax',
-                               help='what is the type used for the output layer. Options are '
-                                    '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
+    sys_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
+                               help='what classes are to be used during training.')
+    sys_parser.add_argument('--out_layer', type=str, default='softmax',
+                               help='what is the type used for the output layer. Options are '
+                                    '(sigmoid, softmax) or the name of .txt files in dx with the correct format.')
     sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
@@ -224,19 +224,22 @@ if __name__ == '__main__':
     # Get classes to be taken under consideration
     valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
     # Get outlayer and map
-    if args.outlayer in ['softmax', 'sigmoid']:
+    if settings.outlayer in ['softmax', 'sigmoid']:
         # Get output layer classes
-        train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
-        out_layer = outlayer_from_str(args.outlayer)
+        train_classes = dset_classes if settings.train_classes == 'dset' else scored_classes
+        out_layer = outlayer_from_str(settings.outlayer)
         dx = DxMap.infer_from_out_layer(train_classes, out_layer)
     else:
-        path_to_outmap = os.path.join(settings.dx, args.outlayer + '.txt')
+        path_to_outmap = os.path.join(settings.dx, settings.outlayer + '.txt')
         if not os.path.isfile(path_to_outmap):
             raise ValueError('Invalid outlayer')
         with open(path_to_outmap, 'r') as f:
             descriptor = f.read()
         out_layer = outlayer_from_str(descriptor.split('\n')[0])
         dx = DxMap.from_str('\n'.join(descriptor.split('\n')[1:]).strip())
+    with open(os.path.join(folder, 'out_layer.txt'), 'w') as f:
+        f.write('{:}\n{:}'.format(out_layer, dx))
+    print('\t{:}'.format(out_layer))
     tqdm.write("Done!")
 
     tqdm.write("Define threshold ...")

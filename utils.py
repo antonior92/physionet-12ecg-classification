@@ -30,6 +30,7 @@ def prepare_for_evaluation(dx, out_layer, y_score, all_targets, ids, correction_
     y_true = dx.prepare_target(y_true, valid_classes)
     return y_true, y_pred, y_score
 
+
 class GetMetrics(object):
 
     def __init__(self, weights, normal_index=None):
