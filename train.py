@@ -224,13 +224,13 @@ if __name__ == '__main__':
     # Get classes to be taken under consideration
     valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
     # Get outlayer and map
-    if settings.outlayer in ['softmax', 'sigmoid']:
+    if settings.out_layer in ['softmax', 'sigmoid']:
         # Get output layer classes
         train_classes = dset_classes if settings.train_classes == 'dset' else scored_classes
-        out_layer = outlayer_from_str(settings.outlayer)
+        out_layer = outlayer_from_str(settings.out_layer)
         dx = DxMap.infer_from_out_layer(train_classes, out_layer)
     else:
-        path_to_outmap = os.path.join(settings.dx, settings.outlayer + '.txt')
+        path_to_outmap = os.path.join(settings.dx, settings.out_layer + '.txt')
         if not os.path.isfile(path_to_outmap):
             raise ValueError('Invalid outlayer')
         with open(path_to_outmap, 'r') as f:
