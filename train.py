@@ -261,6 +261,7 @@ if __name__ == '__main__':
     else:
         raise ValueError('Invalid args.expected_class_distribution.')
     correction_factor = np.nan_to_num(expected_fraction / fraction)
+    np.savetxt(os.path.join(folder, 'correction_factor.txt'), correction_factor)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -336,8 +337,7 @@ if __name__ == '__main__':
         scheduler.step()
         # Save last model
         if ep == args.epochs - 1:
-            torch.save({'threshold': threshold,
-                        'model': model.state_dict(),
+            torch.save({'model': model.state_dict(),
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'final_model.pth'))
             tqdm.write("Save model!")
