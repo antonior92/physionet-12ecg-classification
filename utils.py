@@ -1,4 +1,3 @@
-import random
 import os
 import datetime
 import json
@@ -7,8 +6,10 @@ from warnings import warn
 import torch
 import torch.nn as nn
 import numpy as np
+import pandas as pd
 
 from models.resnet import ResNet1d
+from outlayers import DxMap, outlayer_from_str
 from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
@@ -101,17 +102,19 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
     return model
 
 
-def set_output_folder(args, settings, prefix=''):
-    if settings.folder[-1] == '/':
-        folder = os.path.join(settings.folder, 'output_' +
+def set_output_folder(folder):
+    if folder[-1] == '/':
+        folder = os.path.join(folder, 'output_' +
                               str(datetime.datetime.now()).replace(":", "_").replace(" ", "_").replace(".", "_"))
-    else:
-        folder = settings.folder
     # Create output folder if needed
     try:
         os.makedirs(folder)
     except FileExistsError:
         pass
+    return folder
+
+
+def save_config(folder, args, prefix=''):
     # Save config
     file_name = 'config.json'
     if prefix:
@@ -119,7 +122,130 @@ def set_output_folder(args, settings, prefix=''):
     with open(os.path.join(folder, file_name), 'w') as f:
         json.dump(vars(args), f, indent='\t')
 
-    return folder
+
+def get_data_ids(dset, valid_split, n_total, rng):
+    # Get length
+    n_total = len(dset) if n_total <= 0 else min(n_total, len(dset))
+    n_valid = int(n_total * valid_split)
+    n_train = n_total - n_valid
+    assert n_train + n_valid == n_total, "data split: incorrect sizes"
+    # Get ids
+    all_ids = dset.get_ids()
+    rng.shuffle(all_ids)
+    train_ids = all_ids[:n_train]
+    valid_ids = all_ids[n_train:n_train + n_valid]
+
+    return train_ids, valid_ids
+
+
+def write_data_ids(folder, train_ids, valid_ids, prefix=''):
+    file_name_addon = ''
+    if prefix:
+        file_name_addon = prefix + '_'
+    # write data
+    with open(os.path.join(folder, file_name_addon+'train_ids.txt'), 'w') as f:
+        f.write(','.join(train_ids))
+    with open(os.path.join(folder, file_name_addon+'valid_ids.txt'), 'w') as f:
+        f.write(','.join(valid_ids))
+
+
+def get_output_layer(path):
+    if not os.path.isfile(path):
+        raise ValueError('Invalid outlayer')
+    with open(path, 'r') as f:
+        descriptor = f.read()
+    out_layer = outlayer_from_str(descriptor.split('\n')[0])
+    dx = DxMap.from_str('\n'.join(descriptor.split('\n')[1:]).strip())
+    return out_layer, dx
+
+
+def get_correction_factor(dset, dx, expected_class_distribution):
+    dset.use_only_header(True)
+    occurences = dx.prepare_target(np.vstack([dx.target_from_labels(sample['labels']) for sample in dset]))
+    dset.use_only_header(False)
+    n_occurences = occurences.sum(axis=0)
+    fraction = n_occurences / occurences.shape[0]
+    # Get occurences
+    tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
+    tqdm.write("\t\t\t   = " + ', '.join(
+        ["{:}:{:d}({:.3f})".format(c, n, f) for c, n, f in zip(dx.classes_at_the_output, n_occurences, fraction)]
+    ))
+    # Get classes of interest
+    if expected_class_distribution == 'uniform':
+        expected_fraction = np.array(fraction > 0, dtype=float)
+    elif expected_class_distribution == 'train':
+        expected_fraction = fraction
+    else:
+        raise ValueError('Invalid args.expected_class_distribution.')
+    correction_factor = np.nan_to_num(expected_fraction / fraction)
+    return correction_factor
+
+# Load
+def try_except_msg(default=None):
+    def decorator(cmd):
+        object_name = cmd.__name__.split('_')[-1]
+        def new_cmd(*args, **kwargs):
+            try:
+                x = cmd(*args, **kwargs)
+                if object_name:
+                    tqdm.write("\tFound {:}!".format(object_name))
+                return x
+            except:
+                if object_name:
+                    tqdm.write("\tDid not found {:}!".format(object_name))
+                return default
+        return new_cmd
+    return decorator
+
+
+@try_except_msg()
+def load_model(folder):
+    return torch.load(os.path.join(folder, 'model.pth'), map_location=lambda storage, loc: storage)
+
+
+@try_except_msg(default=(None, None))
+def load_outlayer(folder):
+    return get_output_layer(os.path.join(folder, 'out_layer.txt'))
+
+
+@try_except_msg()
+def load_configdict(folder):
+    with open(os.path.join(folder, 'config.json'), 'r') as f:
+        config_dict = json.load(f)
+    return config_dict
+
+
+@try_except_msg()
+def load_history(folder, ckpt):
+    history = pd.read_csv(os.path.join(folder, 'history.csv'))
+    return history[history['epoch'] < ckpt['epoch'] + 1]  # Remove epochs after the ones from the saved model
+
+
+@try_except_msg(default=([], []))
+def load_ids(folder):
+    with open(os.path.join(folder, 'train_ids.txt'), 'r') as f:
+        train_ids = f.read().split(',')
+        train_ids.sort()
+    with open(os.path.join(folder, 'valid_ids.txt'), 'r') as f:
+        valid_ids = f.read().split(',')
+        valid_ids.sort()
+    return train_ids, valid_ids
+
+@try_except_msg()
+def load_correction_factor(folder):
+    return np.loadtxt(os.path.join(folder, 'correction_factor.txt'))
+
+
+def check_model(folder):
+    tqdm.write("Looking for previous model...")
+    config_dict = load_configdict(folder)
+    ckpt = load_model(folder)
+    out_layer, dx = load_outlayer(folder)
+    correction_factor = load_correction_factor(folder)
+    ids = load_ids(folder)
+    history = load_history(folder, ckpt)
+    tqdm.write("Done!")
+    return config_dict, ckpt, dx, out_layer, correction_factor, ids, history
 
 
 def check_pretrain_model(folder, do_print=True):
@@ -147,31 +273,3 @@ def check_pretrain_model(folder, do_print=True):
 
     pretrain_ids = (pretrain_train_ids, pretrain_valid_ids)
     return config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids
-
-
-def get_data_ids(dset, args):
-    rng = random.Random(args.seed)
-    # Get length
-    n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
-    n_valid = int(n_total * args.valid_split)
-    n_train = n_total - n_valid
-    assert n_train + n_valid == n_total, "data split: incorrect sizes"
-    # Get ids
-    all_ids = dset.get_ids()
-    rng.shuffle(all_ids)
-    train_ids = all_ids[:n_train]
-    valid_ids = all_ids[n_train:n_train + n_valid]
-
-    return train_ids, valid_ids
-
-
-def write_data_ids(folder, train_ids, valid_ids, prefix=''):
-    file_name_addon = ''
-    if prefix:
-        file_name_addon = prefix + '_'
-    # write data
-    with open(os.path.join(folder, file_name_addon+'train_ids.txt'), 'w') as f:
-        f.write(','.join(train_ids))
-    with open(os.path.join(folder, file_name_addon+'valid_ids.txt'), 'w') as f:
-        f.write(','.join(valid_ids))
-
