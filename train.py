@@ -8,9 +8,11 @@ from outlayers import DxMap, outlayer_from_str
 
 from data import *
 from utils import set_output_folder, check_pretrain_model, get_data_ids, \
-    write_data_ids, get_model, GetMetrics, prepare_for_evaluation, get_output_layer, \
-    get_correction_factor, check_model, save_config
+    write_data_ids, get_model, GetMetrics, get_output_layer, \
+    get_correction_factor, check_model, save_config, initialize_history, save_history, \
+    print_message
 from evaluate_12ECG_score import load_weights
+from outlayers import collapse, get_collapse_fun
 
 
 # %% Train model
@@ -56,7 +58,7 @@ def train(ep, model, optimizer, train_loader, out_layer, device, shuffle):
     return total_loss / n_entries
 
 
-def evaluate(ep, model, valid_loader, device):
+def compute_logits(ep, model, valid_loader, device):
     model.eval()
     n_entries = 0
     all_targets = []
@@ -91,7 +93,7 @@ def evaluate(ep, model, valid_loader, device):
     return torch.cat(all_logits), torch.cat(all_targets), all_ids
 
 
-def evaluate_output(out_layer, all_logits, all_targets, batch_size, n_entries, device):
+def output_from_logits(out_layer, all_logits, all_targets, batch_size, n_entries, device):
     total_loss = 0
     all_outputs = []
     n_batches = int(np.ceil(n_entries / batch_size))
@@ -113,9 +115,29 @@ def evaluate_output(out_layer, all_logits, all_targets, batch_size, n_entries, d
     return total_loss / n_entries,  torch.cat(all_outputs)
 
 
-# TODO: 1) Include "only test" option to be passed by the command line; 2) Make check_pretrain_model
-#  to have the same interface as check_model; 3) Include command line option to save logits. 4) Feal with cases
-#  there is no train_id / no valid_id
+def eval(ep, model, valid_loader, batch_size, pred_stage_type, device):
+    # compute_logits
+    all_logits, all_targets, ids = compute_logits(ep, model, valid_loader, device)
+    valid_loss, y_score = output_from_logits(out_layer, all_logits, all_targets, batch_size,
+                                          all_targets.shape[0], device)
+    y_score, all_targets = y_score.numpy(), all_targets.numpy()
+    # Collapse entries with the same id:
+    unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type))
+    # Correct for class imbalance
+    y_score = y_score * correction_factor
+    # Get zero one prediction
+    y_pred_aux = out_layer.get_prediction(y_score)
+    y_pred = dx.prepare_target(y_pred_aux, valid_classes)
+    y_score = dx.prepare_probabilities(y_score, valid_classes)
+    # Get metrics
+    _, y_true = collapse(all_targets, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
+    y_true = dx.prepare_target(y_true, valid_classes)
+    # Comput metric
+    metrics = get_metrics(y_true, y_pred, y_score)
+    return metrics, valid_loss
+
+
+# TODO:1) Include command line option to save logits. 2) Deal with cases there is no valid_id
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -173,6 +195,8 @@ if __name__ == '__main__':
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during training.')
+    sys_parser.add_argument('--only_test', action='store_true',
+                               help='just evaluate the model whithout any training step.')
     sys_parser.add_argument('--out_layer', type=str, default='softmax',
                                help='what is the type used for the output layer. Options are '
                                     '(sigmoid, softmax) or the name of .txt files in dx with the correct format.')
@@ -208,7 +232,7 @@ if __name__ == '__main__':
     # Generate output folder if needed and save config file
     folder = set_output_folder(settings.folder)
     # Check if there is pretrained model in the given folder
-    config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids = check_pretrain_model(folder)
+    config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids, _ = check_pretrain_model(folder)
     pretrain_train_ids, pretrain_valid_ids = pretrain_ids
     # Check if there is a model in the given folder
     config_dict, ckpt, dx, out_layer, correction_factor, ids, history = check_model(folder)
@@ -230,9 +254,13 @@ if __name__ == '__main__':
     # Set seed
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
+    # Define only_test variable
+    only_test = settings.only_test or settings.valid_split >= 1.0
 
     tqdm.write("Define dataset...")
     dset = ECGDataset.from_folder(settings.input_folder, freq=args.sample_freq)
+    if len(dset) == 0:
+        raise ValueError('Dataset is empty.')
     tqdm.write("Done!")
 
     tqdm.write("Define train and validation splits...")
@@ -324,7 +352,7 @@ if __name__ == '__main__':
     start_epoch = 0 if ckpt is None else ckpt['epoch']+1
     best_challenge_metric = -np.Inf
     if history is None:
-        history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
+        history = initialize_history()
     else:
         try:
             best_challenge_metric = max(history[history['epoch'] == ckpt['epoch']]['challenge_metric'])
@@ -333,35 +361,22 @@ if __name__ == '__main__':
         tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
 
     # run over all epochs
-    for ep in range(start_epoch, args.epochs):
-        # Train and evaluate
+    epochs = args.epochs
+    if only_test:
+        metrics, valid_loss = eval(-1, model, valid_loader, args.batch_size, args.pred_stage_type, device)
+        print_message(valid_loss, metrics)
+        epochs = start_epoch  # To avoid entering the loop
+    for ep in range(start_epoch, epochs):
+        # train
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
-        all_logits, all_targets, ids = evaluate(ep, model, valid_loader, device)
-        valid_loss, y_score = evaluate_output(out_layer, all_logits, all_targets, args.batch_size,
-                                              all_targets.shape[0], device)
-
-        y_true, y_pred, y_score = prepare_for_evaluation(dx, out_layer, y_score.numpy(), all_targets.numpy(),
-                                                         ids, correction_factor, valid_classes,
-                                                         args.pred_stage_type)
-        metrics = get_metrics(y_true, y_pred, y_score)
+        metrics, valid_loss = eval(ep, model, valid_loader, args.batch_size, args.pred_stage_type, device)
         # Get learning rate
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
-                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
-            .format(ep, train_loss, valid_loss, learning_rate,
-                    metrics['f_beta'], metrics['g_beta'],
-                    metrics['challenge_metric'])
-        tqdm.write(message)
+        print_message(valid_loss, metrics, ep, learning_rate, train_loss,)
         # Save history
-        history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
-                                  "lr": learning_rate, "f_beta": metrics['f_beta'],
-                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean'],
-                                  'challenge_metric': metrics['challenge_metric']},
-                                 ignore_index=True)
-        history.to_csv(os.path.join(folder, 'history.csv'), index=False)
+        save_history(folder, history, learning_rate, train_loss, valid_loss, metrics, ep)
         # Call optimizer step
         scheduler.step()
         # Save best model

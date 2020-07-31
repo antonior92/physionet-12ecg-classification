@@ -14,22 +14,6 @@ from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
                                   compute_challenge_metric)
-from outlayers import collapse, get_collapse_fun
-
-
-def prepare_for_evaluation(dx, out_layer, y_score, all_targets, ids, correction_factor, valid_classes, pred_stage_type):
-    # Collapse entries with the same id:
-    unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type))
-    # Correct for class imbalance
-    y_score = y_score * correction_factor
-    # Get zero one prediction
-    y_pred_aux = out_layer.get_prediction(y_score)
-    y_pred = dx.prepare_target(y_pred_aux, valid_classes)
-    y_score = dx.prepare_probabilities(y_score, valid_classes)
-    # Get metrics
-    _, y_true = collapse(all_targets, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-    y_true = dx.prepare_target(y_true, valid_classes)
-    return y_true, y_pred, y_score
 
 
 class GetMetrics(object):
@@ -114,15 +98,6 @@ def set_output_folder(folder):
     return folder
 
 
-def save_config(folder, args, prefix=''):
-    # Save config
-    file_name = 'config.json'
-    if prefix:
-        file_name = prefix + '_' + file_name
-    with open(os.path.join(folder, file_name), 'w') as f:
-        json.dump(vars(args), f, indent='\t')
-
-
 def get_data_ids(dset, valid_split, n_total, rng):
     # Get length
     n_total = len(dset) if n_total <= 0 else min(n_total, len(dset))
@@ -136,17 +111,6 @@ def get_data_ids(dset, valid_split, n_total, rng):
     valid_ids = all_ids[n_train:n_train + n_valid]
 
     return train_ids, valid_ids
-
-
-def write_data_ids(folder, train_ids, valid_ids, prefix=''):
-    file_name_addon = ''
-    if prefix:
-        file_name_addon = prefix + '_'
-    # write data
-    with open(os.path.join(folder, file_name_addon+'train_ids.txt'), 'w') as f:
-        f.write(','.join(train_ids))
-    with open(os.path.join(folder, file_name_addon+'valid_ids.txt'), 'w') as f:
-        f.write(','.join(valid_ids))
 
 
 def get_output_layer(path):
@@ -180,10 +144,10 @@ def get_correction_factor(dset, dx, expected_class_distribution):
     correction_factor = np.nan_to_num(expected_fraction / fraction)
     return correction_factor
 
-# Load
+
 def try_except_msg(default=None):
     def decorator(cmd):
-        object_name = cmd.__name__.split('_')[-1]
+        object_name = ''.join(cmd.__name__.split('_')[1:])
         def new_cmd(*args, **kwargs):
             try:
                 x = cmd(*args, **kwargs)
@@ -198,42 +162,98 @@ def try_except_msg(default=None):
     return decorator
 
 
+def fname(folder, name, prefix=''):
+    return os.path.join(folder, (prefix + '_' + name) if prefix else name)
+
+
+def write_data_ids(folder, train_ids, valid_ids, prefix=''):
+    # write data
+    with open(fname(folder, 'train_ids.txt', prefix), 'w') as f:
+        f.write(','.join(train_ids))
+    with open(fname(folder, 'valid_ids.txt', prefix), 'w') as f:
+        f.write(','.join(valid_ids))
+
+
+def save_config(folder, args, prefix=''):
+    with open(fname(folder, 'config.json', prefix), 'w') as f:
+        json.dump(vars(args), f, indent='\t')
+
+
+def initialize_history():
+    history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
+    return history
+
+
+def save_history(folder, history, learning_rate, train_loss, valid_loss, metrics, ep):
+    history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
+                              "lr": learning_rate, "f_beta": metrics['f_beta'],
+                              "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean'],
+                              'challenge_metric': metrics['challenge_metric']},
+                             ignore_index=True)
+    history.to_csv(os.path.join(folder, 'history.csv'), index=False)
+
+
+def print_message(valid_loss, metrics, ep=-1, learning_rate=None, train_loss=None):
+    # Print message
+    if ep >= 0:
+        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
+                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
+                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
+            .format(ep, train_loss, valid_loss, learning_rate,
+                    metrics['f_beta'], metrics['g_beta'],
+                    metrics['challenge_metric'])
+    else:
+        message = 'Performance: \tValid Loss {:.6f} \tFbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
+            .format(valid_loss, metrics['f_beta'], metrics['g_beta'],
+                    metrics['challenge_metric'])
+    tqdm.write(message)
+
+
+
 @try_except_msg()
-def load_model(folder):
-    return torch.load(os.path.join(folder, 'model.pth'), map_location=lambda storage, loc: storage)
-
-
-@try_except_msg(default=(None, None))
-def load_outlayer(folder):
-    return get_output_layer(os.path.join(folder, 'out_layer.txt'))
+def load_model(folder, prefix=''):
+    return torch.load(fname(folder, 'model.pth', prefix), map_location=lambda storage, loc: storage)
 
 
 @try_except_msg()
-def load_configdict(folder):
-    with open(os.path.join(folder, 'config.json'), 'r') as f:
-        config_dict = json.load(f)
-    return config_dict
-
-
-@try_except_msg()
-def load_history(folder, ckpt):
-    history = pd.read_csv(os.path.join(folder, 'history.csv'))
+def load_history(folder, ckpt, prefix=''):
+    history = pd.read_csv(fname(folder, 'history.csv', prefix))
     return history[history['epoch'] < ckpt['epoch'] + 1]  # Remove epochs after the ones from the saved model
 
 
 @try_except_msg(default=([], []))
-def load_ids(folder):
-    with open(os.path.join(folder, 'train_ids.txt'), 'r') as f:
-        train_ids = f.read().split(',')
+def load_ids(folder, prefix=''):
+    with open(fname(folder, 'train_ids.txt', prefix), 'r') as f:
+        str = f.read()
+        if len(str) == 0:
+            raise ValueError
+        train_ids = str.strip().split(',')
         train_ids.sort()
-    with open(os.path.join(folder, 'valid_ids.txt'), 'r') as f:
-        valid_ids = f.read().split(',')
+
+    with open(fname(folder, 'valid_ids.txt', prefix), 'r') as f:
+        str = f.read()
+        if len(str) == 0:
+            raise ValueError
+        valid_ids = str.strip().split(',')
         valid_ids.sort()
     return train_ids, valid_ids
 
+
+@try_except_msg()
+def load_configdict(folder, prefix=''):
+    with open(fname(folder, 'config.json', prefix), 'r') as f:
+        config_dict = json.load(f)
+    return config_dict
+
+
+@try_except_msg(default=(None, None))
+def load_outlayer(folder):
+    return get_output_layer(fname(folder, 'out_layer.txt'))
+
+
 @try_except_msg()
 def load_correction_factor(folder):
-    return np.loadtxt(os.path.join(folder, 'correction_factor.txt'))
+    return np.loadtxt(fname(folder, 'correction_factor.txt'))
 
 
 def check_model(folder):
@@ -249,27 +269,10 @@ def check_model(folder):
 
 
 def check_pretrain_model(folder, do_print=True):
-    try:
-        ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'),
-                                         map_location=lambda storage, loc: storage)
-        config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
-        with open(config_pretrain_stage, 'r') as f:
-            config_dict_pretrain_stage = json.load(f)
-        if do_print:
-            tqdm.write("Found pretrained model!")
-        with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
-            pretrain_train_ids = f.read().split(',')
-            pretrain_train_ids.sort()
-        with open(os.path.join(folder, 'pretrain_valid_ids.txt'), 'r') as f:
-            pretrain_valid_ids = f.read().split(',')
-            pretrain_valid_ids.sort()
-    except:
-        ckpt_pretrain_stage = None
-        config_dict_pretrain_stage = None
-        pretrain_train_ids = []
-        pretrain_valid_ids = []
-        if do_print:
-            tqdm.write("Did not find pretrained model!")
-
-    pretrain_ids = (pretrain_train_ids, pretrain_valid_ids)
-    return config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids
+    tqdm.write("Looking for self-supervised pretrained stage...")
+    config_dict = load_configdict(folder, prefix='pretrain')
+    ckpt = load_model(folder, prefix='pretrain')
+    ids = load_ids(folder, prefix='pretrain')
+    history = load_history(folder, ckpt, prefix='pretrain')
+    tqdm.write("Done!")
+    return config_dict, ckpt, ids, history
