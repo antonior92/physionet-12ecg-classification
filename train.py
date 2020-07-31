@@ -11,7 +11,6 @@ from utils import set_output_folder, check_pretrain_model, get_data_ids, \
     write_data_ids, get_model, GetMetrics, get_output_layer, \
     get_correction_factor, check_model, save_config, initialize_history, save_history, \
     print_message
-from evaluate_12ECG_score import load_weights
 from outlayers import collapse, get_collapse_fun
 
 
@@ -137,7 +136,9 @@ def eval(ep, model, valid_loader, batch_size, pred_stage_type, device):
     return metrics, valid_loss
 
 
-# TODO:1) Include command line option to save logits. 2) Deal with cases there is no valid_id
+# TODO:1) Include command line option to save logits. 2) Deal with cases there is no valid_id;
+#  3) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
+#  (i.e. deal with repeated classes)
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -314,9 +315,9 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
-    weights = load_weights(os.path.join(settings.dx, 'weights.csv'), valid_classes)
-    NORMAL = '426783006'
-    get_metrics = GetMetrics(weights, valid_classes.index(NORMAL))
+    normal_class = '426783006'
+    equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
+    get_metrics = GetMetrics(os.path.join(settings.dx, 'weights.csv'), valid_classes, normal_class, equivalent_classes)
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")

@@ -13,23 +13,36 @@ from outlayers import DxMap, outlayer_from_str
 from models.mlp import MlpClassifier
 from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
-                                  compute_challenge_metric)
+                                  compute_challenge_metric, prepare_classes, load_weights)
 
 
 class GetMetrics(object):
 
-    def __init__(self, weights, normal_index=None):
+    def __init__(self, path, classes, normal_class=None, equivalent_classes=None):
         """Compute metrics"""
-        self.weights = weights
-        self.normal_index = normal_index
+        self.path = path
+        self.normal_class = normal_class
+        self.equivalent_classes = equivalent_classes
+        self.classes = classes
 
     def __call__(self, y_true, y_pred, y_score):
         """Return dictionary with relevant metrics"""
+        classes, y_true, y_pred, y_score = prepare_classes(self.classes, self.equivalent_classes,
+                                                           y_true, y_pred, y_score)
+        weights = load_weights(self.path, classes)
+        # Only consider classes that are scored with the Challenge metric.
+        indices = np.any(weights, axis=0)  # Find indices of classes in weight matrix.
+        classes = [x for i, x in enumerate(self.classes) if indices[i]]
+        y_true = y_true[:, indices]
+        y_pred = y_pred[:, indices]
+        y_score = y_score[:, indices]
+        weights = weights[np.ix_(indices, indices)]
+        #  Comput metrics
         auroc, auprc = compute_auc(y_true, y_score)
         accuracy = compute_accuracy(y_true, y_pred)
         f_measure = compute_f_measure(y_true, y_pred)
         f_beta, g_beta = compute_beta_measures(y_true, y_pred, beta=2)
-        challenge_metric = compute_challenge_metric(self.weights, y_true, y_pred, self.normal_index)
+        challenge_metric = compute_challenge_metric(weights, y_true, y_pred, classes, self.normal_class)
         geometric_mean = np.sqrt(f_beta * g_beta)
         return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta,
                 'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
