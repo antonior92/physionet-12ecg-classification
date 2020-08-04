@@ -3,12 +3,12 @@ import torch
 import pandas as pd
 from warnings import warn
 from tqdm import tqdm
+from outlayers import DxMap, outlayer_from_str
 
 from data import *
 from utils import set_output_folder, check_pretrain_model, get_data_ids, \
-    write_data_ids, get_dataloaders, get_model, GetMetrics
-from output_layer import OutputLayer, collapse, DxClasses, get_collapse_fun, get_dx
-from evaluate_12ECG_score import (load_weights)
+    write_data_ids, get_model, GetMetrics, prepare_for_evaluation
+from evaluate_12ECG_score import load_weights
 
 
 # %% Train model
@@ -75,7 +75,7 @@ def evaluate(ep, model, valid_loader, out_layer, device):
                 model[-1].update_sub_ids(sub_ids)
             # Forward pass
             logits = model(traces)
-            output = out_layer.get_output(logits)
+            output = out_layer(logits)
             # Loss
             loss = out_layer.loss(logits, target)
             # Get loss
@@ -104,6 +104,11 @@ if __name__ == '__main__':
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--dont_shuffle', action='store_true',
                                help='dont shuffle training samples each epoch.')
+    config_parser.add_argument('--expected_class_distribution', choices=['uniform', 'train'], default='uniform',
+                               help="The expected distribution of classes. If 'uniform' consider uniform distribution."
+                                    "If 'train' consider the distribution observed in the training dataset."
+                                    "The classifier will be corrected to account for this prior information"
+                                    "on the distribution of the classes.")
     config_parser.add_argument('--epochs', type=int, default=200,
                                help='maximum number of epochs (default: 70)')
     config_parser.add_argument('--sample_freq', type=int, default=400,
@@ -152,16 +157,16 @@ if __name__ == '__main__':
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
-    config_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
-                               help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer', choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
-                               help='what is the type used for the output layer. Options are '
-                                    '(sigmoid, sigmoid-and-softmax, softmax).')
     args, rem_args = config_parser.parse_known_args()
     # System setting
     sys_parser = argparse.ArgumentParser(add_help=False)
+    sys_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
+                               help='what classes are to be used during training.')
+    sys_parser.add_argument('--out_layer', type=str, default='softmax',
+                               help='what is the type used for the output layer. Options are '
+                                    '(sigmoid, softmax) or the name of .txt files in dx with the correct format.')
     sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
@@ -193,7 +198,7 @@ if __name__ == '__main__':
     pretrain_train_ids, pretrain_valid_ids = pretrain_ids
 
     tqdm.write("Define dataset...")
-    dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    dset = ECGDataset.from_folder(settings.input_folder, freq=args.sample_freq)
     tqdm.write("Done!")
 
     tqdm.write("Define train and validation splits...")
@@ -205,13 +210,58 @@ if __name__ == '__main__':
         train_ids, valid_ids = get_data_ids(dset, args)
     # Save train, validation ids
     write_data_ids(folder, train_ids, valid_ids)
+    # Get dataset
+    train_dset = dset.get_subdataset(train_ids)
+    valid_dset = dset.get_subdataset(valid_ids)
     tqdm.write("Done!")
 
     tqdm.write("Define output layer...")
     # Get all classes in the dataset
     dset_classes = dset.get_classes()
-    dx, valid_classes = get_dx(dset_classes, args.train_classes, args.valid_classes, args.outlayer, settings.dx)
-    out_layer = OutputLayer(args.batch_size, dx, device)
+    # Get all classes to be scored
+    df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
+    scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
+    # Get classes to be taken under consideration
+    valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
+    # Get outlayer and map
+    if settings.out_layer in ['softmax', 'sigmoid']:
+        # Get output layer classes
+        train_classes = dset_classes if settings.train_classes == 'dset' else scored_classes
+        out_layer = outlayer_from_str(settings.out_layer)
+        dx = DxMap.infer_from_out_layer(train_classes, out_layer)
+    else:
+        path_to_outmap = os.path.join(settings.dx, settings.out_layer + '.txt')
+        if not os.path.isfile(path_to_outmap):
+            raise ValueError('Invalid outlayer')
+        with open(path_to_outmap, 'r') as f:
+            descriptor = f.read()
+        out_layer = outlayer_from_str(descriptor.split('\n')[0])
+        dx = DxMap.from_str('\n'.join(descriptor.split('\n')[1:]).strip())
+    with open(os.path.join(folder, 'out_layer.txt'), 'w') as f:
+        f.write('{:}\n{:}'.format(out_layer, dx))
+    print('\t{:}'.format(out_layer))
+    tqdm.write("Done!")
+
+    tqdm.write("Define threshold ...")
+    train_dset = train_dset.use_only_header(True)
+    occurences = dx.prepare_target(np.vstack([dx.target_from_labels(sample['labels']) for sample in train_dset]))
+    train_dset = train_dset.use_only_header(False)
+    n_occurences = occurences.sum(axis=0)
+    fraction = n_occurences / occurences.shape[0]
+    # Get occurences
+    tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
+    tqdm.write("\t\t\t   = " + ', '.join(
+        ["{:}:{:d}({:.3f})".format(c, n, f) for c, n, f in zip(dx.classes_at_the_output, n_occurences, fraction)]
+    ))
+    # Get classes of interest
+    if args.expected_class_distribution == 'uniform':
+        expected_fraction = np.array(fraction > 0, dtype=float)
+    elif args.expected_class_distribution == 'train':
+        expected_fraction = fraction
+    else:
+        raise ValueError('Invalid args.expected_class_distribution.')
+    correction_factor = np.nan_to_num(expected_fraction / fraction)
+    np.savetxt(os.path.join(folder, 'correction_factor.txt'), correction_factor)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -221,14 +271,13 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
-    train_loader = get_dataloaders(dset, train_ids, args, dx, seed=args.seed)
-    valid_loader = get_dataloaders(dset, valid_ids, args, dx)
-    tqdm.write("Done!")
-
-    tqdm.write("Define threshold ...")
-    threshold = dx.compute_threshold(dset, train_ids)
-    tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
+    train_loader = ECGBatchloader(train_dset, dx, batch_size=args.batch_size,
+                                  length=args.seq_length, seed=args.seed)
+    valid_loader = ECGBatchloader(valid_dset, dx, batch_size=args.batch_size, length=args.seq_length)
+    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(len(train_dset), 100 * len(train_dset) / len(dset), len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
+               .format(len(valid_dset), 100 * len(valid_dset) / len(dset), len(valid_loader)))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
@@ -251,17 +300,9 @@ if __name__ == '__main__':
         # Train and evaluate
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
         valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
-        # Collapse entries with the same id:
-        unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))
-        # Get zero one prediction
-        y_pred_aux = dx.apply_threshold(y_score, threshold)
-        y_pred = dx.target_to_binaryclass(y_pred_aux)
-        y_pred = dx.reorganize(y_pred, valid_classes, prob=False)
-        y_score = dx.reorganize(y_score, valid_classes, prob=True)
-        # Get metrics
-        y_true = dx.target_to_binaryclass(all_targets)
-        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-        y_true = dx.reorganize(y_true, valid_classes)
+        y_true, y_pred, y_score = prepare_for_evaluation(dx, out_layer, y_score, all_targets, ids,
+                                                         correction_factor, valid_classes,
+                                                         args.pred_stage_type)
         metrics = get_metrics(y_true, y_pred, y_score)
         # Get learning rate
         for param_group in optimizer.param_groups:
@@ -286,7 +327,6 @@ if __name__ == '__main__':
         if best_challenge_metric < metrics['challenge_metric']:
             # Save model
             torch.save({'epoch': ep,
-                        'threshold': threshold,
                         'model': model.state_dict(),
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'model.pth'))
@@ -297,8 +337,7 @@ if __name__ == '__main__':
         scheduler.step()
         # Save last model
         if ep == args.epochs - 1:
-            torch.save({'threshold': threshold,
-                        'model': model.state_dict(),
+            torch.save({'model': model.state_dict(),
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'final_model.pth'))
             tqdm.write("Save model!")

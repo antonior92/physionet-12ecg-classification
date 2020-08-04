@@ -100,21 +100,22 @@ def get_batches(batch_size, ids, counts, drop_last=False):
 
 
 class ECGBatchloader(abc.Iterable):
-    def __init__(self, dset, ids, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False,
+    def __init__(self, dset, dx=None, batch_size=32, length=4096, min_length=None, drop_last=False,
                  seed=0):
         self.dset = dset
+        self.ids = dset.get_ids()
         if min_length is None:
             min_length = length // 2
         self.transformation = lambda s: SplitLongSignals(s, length, min_length)
         dset.use_only_header(True)
-        counts = [len(self.transformation(s)) for s in dset[ids]]
+        counts = [len(self.transformation(s)) for s in dset]
         dset.use_only_header(False)
 
         def collapsing_fn(batch):
             traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32) for s in batch], dim=0)
             if dx is not None:
                 target = torch.stack(
-                    [torch.tensor(dx.get_target_from_labels(s['labels']), dtype=torch.long) for s in batch], dim=0)
+                    [torch.tensor(dx.target_from_labels(s['labels']), dtype=torch.long) for s in batch], dim=0)
             ids = [s['id'] for s in batch]
             sub_ids = [s['sub_id'] for s in batch]
             if dx is not None:
@@ -123,7 +124,6 @@ class ECGBatchloader(abc.Iterable):
                 return (traces, ids, sub_ids)
 
         self.collapsing_fn = collapsing_fn
-        self.ids = ids
         self.counts = counts
         self.batch_size = batch_size
         self.drop_last = drop_last

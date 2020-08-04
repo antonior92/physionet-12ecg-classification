@@ -1,5 +1,4 @@
 from tqdm import tqdm
-import os
 import json
 import argparse
 from warnings import warn
@@ -7,10 +6,9 @@ import torch
 
 from data import *
 from utils import check_pretrain_model, get_data_ids, GetMetrics, get_dataloaders
-from output_layer import get_dx, collapse, get_collapse_fun
-from run_12ECG_classifier import load_12ECG_model, run_12ECG_classifier
-from evaluate_12ECG_score import (load_weights)
-from driver import load_challenge_data
+from outlayers import DxMap
+from run_12ECG_classifier import load_12ECG_model
+from evaluate_12ECG_score import load_weights
 
 
 """
@@ -76,10 +74,12 @@ if __name__ == '__main__':
 
     tqdm.write("Load test=valid data split...")
     # if pretrained ids are available (not empty)
-    if pretrain_train_ids and pretrain_valid_ids:
+    if pretrain_valid_ids:
         valid_ids = pretrain_valid_ids
     else:
         _, valid_ids = get_data_ids(dset, args)
+
+        valid_dset = dset.get_subdataset(valid_ids)
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
@@ -92,7 +92,7 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
-    valid_loader = get_dataloaders(dset, valid_ids, args, dx, seed=args.seed)
+    valid_loader = ECGBatchloader(valid_dset, dx, batch_size=args.batch_size, length=args.seq_length)
     tqdm.write("Done!")
 
     # Load model.
@@ -147,17 +147,9 @@ if __name__ == '__main__':
     tqdm.write('Evaluate predictions...')
     y_score = np.concatenate(all_outputs)
     all_targets = np.concatenate(all_targets)
-    # Collapse entries with the same id:
-    unique_ids, y_score = collapse(y_score, all_ids, fn=get_collapse_fun(model_config['pred_stage_type']))
-    # Get zero one prediction
-    y_pred_aux = dx.apply_threshold(y_score, threshold)
-    y_pred = dx.target_to_binaryclass(y_pred_aux)
-    y_pred = dx.reorganize(y_pred, test_classes, prob=False)
-    y_score = dx.reorganize(y_score, test_classes, prob=True)
-    # Get metrics
-    y_true = dx.target_to_binaryclass(all_targets)
-    _, y_true = collapse(y_true, all_ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-    y_true = dx.reorganize(y_true, test_classes)
+    y_true, y_pred, y_score = prepare_for_evaluation(dx, out_layer, y_score, all_targets, ids,
+                                                     correction_factor, valid_classes,
+                                                     args.pred_stage_type)
     metrics = get_metrics(y_true, y_pred, y_score)
     # print metrics
     message = "Metrics: \tf_beta: {:.3f} \tg_beta: {:.3f} \tgeom_mean: {:.3f} \t challenge: {:.3f}".format(
