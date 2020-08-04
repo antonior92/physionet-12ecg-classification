@@ -34,7 +34,8 @@ def execute(trial):
     #train.py setup
     train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
-        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)))
+        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0))     
+        )
     
     #pretrain comand
     #pre_cmd = " ".join(pre_set_up)
@@ -75,47 +76,51 @@ def del_unworthy_trials(dir_name, best_iter):
                  os.remove(os.path.join(dir_name, item, file))
     return
 
+
+if __name__ == "__main__":
+    
 #defining search space
-search_space = {
-    'kernel_size': [9,15,17],
-    'dropout_rate': [0.2,0.5,0.8]
-}
+#search_space = {
+    # 'kernel_size': [9,15,17],
+    # 'dropout_rate': [0.2,0.5,0.8]
     #'pre_lr':[0.01],
     #'pre_lr_factor':[0.1],
     #'pre_dropout_rate':[0.2],
     #'pre_num_heads':[2],
-    #'pre_emb_size':[50],
-#creates gridsearch folder
-if os.path.isdir("".join((main_path,'/outputs_gridsearch'))) != False:
-        os.mkdir('outputs_gridsearch')
+    #'pre_emb_size':[50]}
 
-#calculates number of trials
-number_trials=1
-for key, value in search_space.items() :
-    number_trials *= len(value)
+    #creates gridsearch folder
+    if os.path.isdir("".join((main_path,'/outputs_gridsearch'))) != False:
+            os.mkdir('outputs_gridsearch')
 
-#sets up the study and calls the function
-study= optuna.create_study(sampler=optuna.samplers.GridSampler(search_space), direction='maximize')
-study.optimize(execute, n_trials = number_trials)
-#joblib.dump(study, dump_file_path)
+    #calculates number of trials
+    number_trials=1
+    for key, value in search_space.items() :
+        number_trials *= len(value)
 
-#delete the model of the last iteration if it isnt the best value
-del_unworthy_trials(os.path.join(main_path,'outputs_gridsearch'), study.best_trial.number)
+    #sets up the study and calls the function
+    study= optuna.create_study(sampler=optuna.samplers.RandomSampler(), direction='maximize') #for gridsearch: .GridSample(search_space)
+    study.optimize(execute, n_trials = 2)
+    #joblib.dump(study, dump_file_path)
 
-#after executing shows best parameters
-print('\nBest study trial: ',study.best_trial)
-print('\nParams with the best results:',study.best_params)
-print('\nThe best value was:',study.best_value)
+    #delete the model of the last iteration if it isnt the best value
+    del_unworthy_trials(os.path.join(main_path,'outputs_gridsearch'), study.best_trial.number)
 
+    #after executing shows best parameters
+    print('\nBest study trial: ',study.best_trial)
+    print('\nParams with the best results:',study.best_params)
+    print('\nThe best value was:',study.best_value)
+pass
 
 #todo: 
-#deletar modelos para não estourar memória
-    #posso usar study.best_trial.number para remover modelo das pastas que não forem o best trial. Adicionar código na linha 53.
+
 #argparse para simplificar codigo
 #codigo não funciona quando a pasta grid search tem iterações antigas nela
 
 """
 Done:
+#deletar modelos para não estourar memória
+    #posso usar study.best_trial.number para remover modelo das pastas que não forem o best trial. Adicionar código na linha 53.
 figure how to wait until the csv file is complete to run the file (line 35) -> aparently os.system
     already waits(have to check when runing)
 define the parameters range for the optimization
