@@ -198,29 +198,35 @@ def initialize_history():
 
 
 def save_history(folder, history, learning_rate, train_loss, valid_loss, metrics, ep):
-    history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
-                              "lr": learning_rate, "f_beta": metrics['f_beta'],
-                              "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean'],
-                              'challenge_metric': metrics['challenge_metric']},
-                             ignore_index=True)
+    dict_history = {"epoch": ep, "train_loss": train_loss,
+                    "lr": learning_rate}
+    if metrics is not None:
+        dict_history.update({"f_beta": metrics['f_beta'], "g_beta": metrics['g_beta'],
+                             "geom_mean": metrics['geom_mean'],
+                             "challenge_metric": metrics['challenge_metric']})
+    if valid_loss is not None:
+        dict_history["valid_loss"] = valid_loss
+    history = history.append(dict_history, ignore_index=True)
     history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
 
-def print_message(valid_loss, metrics, ep=-1, learning_rate=None, train_loss=None):
+def print_message(valid_loss=None, metrics=None, ep=-1, learning_rate=None, train_loss=None):
     # Print message
+    message = ''
     if ep >= 0:
-        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
-                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
-            .format(ep, train_loss, valid_loss, learning_rate,
-                    metrics['f_beta'], metrics['g_beta'],
-                    metrics['challenge_metric'])
+        message += 'Epoch {:2d}:'.format(ep)
     else:
-        message = 'Performance: \tValid Loss {:.6f} \tFbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
-            .format(valid_loss, metrics['f_beta'], metrics['g_beta'],
-                    metrics['challenge_metric'])
+        message += 'Performance:'
+    if learning_rate is not None:
+        message += ' \tLearning Rate {:.7f}'.format(learning_rate)
+    if train_loss is not None:
+        message += ' \tTrain Loss {:.6f}'.format(train_loss)
+    if valid_loss is not None:
+        message += ' \tValid Loss {:.6f}'.format(valid_loss)
+    if metrics is not None:
+        message += ' \tFbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
+                    .format(metrics['f_beta'], metrics['g_beta'], metrics['challenge_metric'])
     tqdm.write(message)
-
 
 
 @try_except_msg()

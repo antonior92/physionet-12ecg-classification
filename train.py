@@ -136,7 +136,7 @@ def eval(ep, model, valid_loader, batch_size, pred_stage_type, device):
     return metrics, valid_loss
 
 
-# TODO:1) Include command line option to save logits. 2) Deal with cases there is no valid_id;
+# TODO:1) Include command line option to save logits.
 #  3) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
 #  (i.e. deal with repeated classes)
 if __name__ == '__main__':
@@ -215,8 +215,8 @@ if __name__ == '__main__':
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
                             help='Path to folder containing class information.')
-    sys_parser.add_argument('--cuda', action='store_true',
-                            help='use cuda for computations. (default: False)')
+    sys_parser.add_argument('--no_cuda', action='store_true',
+                            help='do not use cuda for computations, even if available. (default: False)')
     sys_parser.add_argument('--save_last', action='store_true',
                             help='if true save the last model, otherwise, save the best model'
                                  '(according to challenge metric).')
@@ -229,7 +229,10 @@ if __name__ == '__main__':
     settings, rem_args = sys_parser.parse_known_args()
 
     # Set device
-    device = torch.device('cuda:0' if settings.cuda else 'cpu')
+    use_cuda = not settings.no_cuda and torch.cuda.is_available()
+    device = torch.device('cuda:0' if use_cuda else 'cpu')
+    if use_cuda:
+        tqdm.write("Using gpu!")
     # Generate output folder if needed and save config file
     folder = set_output_folder(settings.folder)
     # Check if there is pretrained model in the given folder
@@ -370,19 +373,24 @@ if __name__ == '__main__':
     for ep in range(start_epoch, epochs):
         # train
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
-        metrics, valid_loss = eval(ep, model, valid_loader, args.batch_size, args.pred_stage_type, device)
+        if len(valid_loader) > 0:
+            metrics, valid_loss = eval(ep, model, valid_loader, args.batch_size, args.pred_stage_type, device)
+        else:
+            metrics, valid_loss = None, None
         # Get learning rate
+        learning_rate = 0
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        print_message(valid_loss, metrics, ep, learning_rate, train_loss,)
+        print_message(valid_loss, metrics, ep, learning_rate, train_loss)
         # Save history
         save_history(folder, history, learning_rate, train_loss, valid_loss, metrics, ep)
         # Call optimizer step
         scheduler.step()
+        # Check if it is best metric
+        is_best_metric = best_challenge_metric < metrics['challenge_metric'] if metrics is not None else False
         # Save best model
-        if (settings.save_last and (ep == args.epochs - 1)) \
-            or (best_challenge_metric < metrics['challenge_metric']):
+        if (settings.save_last and (ep == args.epochs - 1)) or is_best_metric:
             # Save model
             torch.save({'epoch': ep,
                         'model': model.state_dict(),
@@ -390,4 +398,6 @@ if __name__ == '__main__':
                         'scheduler': scheduler.state_dict()},
                        os.path.join(folder, 'model.pth'))
             tqdm.write("Save model!")
-        best_challenge_metric = max(metrics['challenge_metric'], best_challenge_metric)
+        # Update best metric
+        if is_best_metric:
+            best_challenge_metric = metrics['challenge_metric']
