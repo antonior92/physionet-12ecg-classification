@@ -97,7 +97,7 @@ def output_from_logits(out_layer, all_logits, batch_size, device):
         start = end
         end = min(start + batch_size, n_entries)
         logits = all_logits[start:end, :]
-        logits.to(device)
+        logits = logits.to(device)
         # Outputs
         outputs = out_layer(logits)
         all_outputs.append(outputs.detach().cpu())
