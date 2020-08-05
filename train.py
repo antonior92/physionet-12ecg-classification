@@ -10,7 +10,7 @@ from data import *
 from utils import set_output_folder, check_pretrain_model, get_data_ids, \
     write_data_ids, get_model, GetMetrics, get_output_layer, \
     get_correction_factor, check_model, save_config, initialize_history, save_history, \
-    print_message, get_targets
+    print_message, get_targets, update_history
 from outlayers import collapse, get_collapse_fun
 
 
@@ -384,7 +384,8 @@ if __name__ == '__main__':
         # Print message
         print_message(metrics, ep, learning_rate, train_loss)
         # Save history
-        save_history(folder, history, learning_rate, train_loss, metrics, ep)
+        history = update_history(history, learning_rate, train_loss, metrics, ep)
+        save_history(folder, history)
         # Call optimizer step
         scheduler.step()
         # Check if it is best metric

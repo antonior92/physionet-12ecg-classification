@@ -203,14 +203,17 @@ def initialize_history():
     return history
 
 
-def save_history(folder, history, learning_rate, train_loss, metrics, ep):
+def update_history(history, learning_rate, train_loss, metrics, ep):
     dict_history = {"epoch": ep, "train_loss": train_loss,
                     "lr": learning_rate}
     if metrics is not None:
         dict_history.update({"f_beta": metrics['f_beta'], "g_beta": metrics['g_beta'],
                              "geom_mean": metrics['geom_mean'],
                              "challenge_metric": metrics['challenge_metric']})
-    history = history.append(dict_history, ignore_index=True)
+    return history.append(dict_history, ignore_index=True)
+
+
+def save_history(folder, history):
     history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
 
@@ -289,7 +292,7 @@ def check_model(folder):
     return config_dict, ckpt, dx, out_layer, correction_factor, ids, history
 
 
-def check_pretrain_model(folder, do_print=True):
+def check_pretrain_model(folder):
     tqdm.write("Looking for self-supervised pretrained stage...")
     config_dict = load_configdict(folder, prefix='pretrain')
     ckpt = load_model(folder, prefix='pretrain')
