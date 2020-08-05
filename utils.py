@@ -136,10 +136,16 @@ def get_output_layer(path):
     return out_layer, dx
 
 
-def get_correction_factor(dset, dx, expected_class_distribution):
+def get_targets(dset, dx):
     dset.use_only_header(True)
-    occurences = dx.prepare_target(np.vstack([dx.target_from_labels(sample['labels']) for sample in dset]))
+    targets = np.vstack([dx.target_from_labels(sample['labels']) for sample in dset])
     dset.use_only_header(False)
+    return targets
+
+
+def get_correction_factor(dset, dx, expected_class_distribution):
+    targets = get_targets(dset, dx)
+    occurences = dx.prepare_target(targets)
     n_occurences = occurences.sum(axis=0)
     fraction = n_occurences / occurences.shape[0]
     # Get occurences
@@ -193,24 +199,22 @@ def save_config(folder, args, prefix=''):
 
 
 def initialize_history():
-    history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
+    history = pd.DataFrame(columns=["epoch", "train_loss", "lr", "f_beta", "g_beta", "geom_mean"])
     return history
 
 
-def save_history(folder, history, learning_rate, train_loss, valid_loss, metrics, ep):
+def save_history(folder, history, learning_rate, train_loss, metrics, ep):
     dict_history = {"epoch": ep, "train_loss": train_loss,
                     "lr": learning_rate}
     if metrics is not None:
         dict_history.update({"f_beta": metrics['f_beta'], "g_beta": metrics['g_beta'],
                              "geom_mean": metrics['geom_mean'],
                              "challenge_metric": metrics['challenge_metric']})
-    if valid_loss is not None:
-        dict_history["valid_loss"] = valid_loss
     history = history.append(dict_history, ignore_index=True)
     history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
 
-def print_message(valid_loss=None, metrics=None, ep=-1, learning_rate=None, train_loss=None):
+def print_message(metrics=None, ep=-1, learning_rate=None, train_loss=None):
     # Print message
     message = ''
     if ep >= 0:
@@ -221,8 +225,6 @@ def print_message(valid_loss=None, metrics=None, ep=-1, learning_rate=None, trai
         message += ' \tLearning Rate {:.7f}'.format(learning_rate)
     if train_loss is not None:
         message += ' \tTrain Loss {:.6f}'.format(train_loss)
-    if valid_loss is not None:
-        message += ' \tValid Loss {:.6f}'.format(valid_loss)
     if metrics is not None:
         message += ' \tFbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
                     .format(metrics['f_beta'], metrics['g_beta'], metrics['challenge_metric'])

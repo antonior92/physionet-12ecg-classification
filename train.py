@@ -10,7 +10,7 @@ from data import *
 from utils import set_output_folder, check_pretrain_model, get_data_ids, \
     write_data_ids, get_model, GetMetrics, get_output_layer, \
     get_correction_factor, check_model, save_config, initialize_history, save_history, \
-    print_message
+    print_message, get_targets
 from outlayers import collapse, get_collapse_fun
 
 
@@ -60,28 +60,24 @@ def train(ep, model, optimizer, train_loader, out_layer, device, shuffle):
 def compute_logits(ep, model, valid_loader, device):
     model.eval()
     n_entries = 0
-    all_targets = []
     all_logits = []
     all_ids = []
-    eval_desc = "Epoch {0:2d}: valid                 " if ep >= 0 \
-        else "valid"
+    eval_desc = "Epoch {0:2d}: valid                 " if ep >= 0 else "valid"
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_loader),
                     desc=eval_desc.format(ep, 0), position=0)
     for i, batch in enumerate(valid_loader):
         with torch.no_grad():
-            traces, target, ids, sub_ids = batch
+            traces, ids, sub_ids = batch
             traces = traces.to(device=device)
-            target = target.to(device=device)
             # update sub_ids for final prediction stage model
             if model[-1]._get_name() == 'RNNPredictionStage':
                 model[-1].update_sub_ids(sub_ids)
             # Forward pass
             logits = model(traces)
             # append
-            all_targets.append(target.detach().cpu())
             all_logits.append(logits.detach().cpu())
             all_ids.extend(ids)
-            bs = target.size(0)
+            bs = traces.size(0)
             n_entries += bs
             # Print result
             eval_bar.update(bs)
@@ -89,11 +85,11 @@ def compute_logits(ep, model, valid_loader, device):
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
         model[-1].reset()
-    return torch.cat(all_logits), torch.cat(all_targets), all_ids
+    return torch.cat(all_logits), all_ids
 
 
-def output_from_logits(out_layer, all_logits, all_targets, batch_size, n_entries, device):
-    total_loss = 0
+def output_from_logits(out_layer, all_logits, batch_size, device):
+    n_entries = all_logits.shape[0]
     all_outputs = []
     n_batches = int(np.ceil(n_entries / batch_size))
     end = 0
@@ -101,44 +97,35 @@ def output_from_logits(out_layer, all_logits, all_targets, batch_size, n_entries
         start = end
         end = min(start + batch_size, n_entries)
         logits = all_logits[start:end, :]
-        target = all_targets[start:end, :]
         logits.to(device)
-        target.to(device)
         # Outputs
         outputs = out_layer(logits)
         all_outputs.append(outputs.detach().cpu())
-        # Loss
-        loss = out_layer.loss(logits, target)
-        # Get loss
-        total_loss += loss.detach().cpu().numpy()
-    return total_loss / n_entries,  torch.cat(all_outputs)
+    return torch.cat(all_outputs)
 
 
-def eval(ep, model, valid_loader, batch_size, pred_stage_type, device):
+def evaluate(ep, model, out_layer, dx, correction_factor, targets_ids, valid_loader,
+             classes, batch_size, pred_stage_type, device):
     # compute_logits
-    all_logits, all_targets, ids = compute_logits(ep, model, valid_loader, device)
-    valid_loss, y_score = output_from_logits(out_layer, all_logits, all_targets, batch_size,
-                                          all_targets.shape[0], device)
-    y_score, all_targets = y_score.numpy(), all_targets.numpy()
+    all_logits, ids = compute_logits(ep, model, valid_loader, device)
+    y_score = output_from_logits(out_layer, all_logits,  batch_size, device)
+    y_score = y_score.numpy()
     # Collapse entries with the same id:
-    unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type))
+    _, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type), unique_ids=targets_ids)
     # Correct for class imbalance
     y_score = y_score * correction_factor
     # Get zero one prediction
     y_pred_aux = out_layer.get_prediction(y_score)
-    y_pred = dx.prepare_target(y_pred_aux, valid_classes)
-    y_score = dx.prepare_probabilities(y_score, valid_classes)
-    # Get metrics
-    _, y_true = collapse(all_targets, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-    y_true = dx.prepare_target(y_true, valid_classes)
-    # Comput metric
-    metrics = get_metrics(y_true, y_pred, y_score)
-    return metrics, valid_loss
+    y_pred = dx.prepare_target(y_pred_aux, classes)
+    y_score = dx.prepare_probabilities(y_score, classes)
+    return y_pred, y_score
 
 
 # TODO:1) Include command line option to save logits.
-#  3) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
+#  2) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
 #  (i.e. deal with repeated classes)
+#  3) Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
+#  4) Merge check_model and check_pretrain_model into one single function?
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -305,8 +292,13 @@ if __name__ == '__main__':
             f.write('{:}\n{:}'.format(out_layer, dx))
     else:
         tqdm.write("\tUsing pre-specified outlayer!")
-    print('\t{:}'.format(out_layer))
+    tqdm.write('\t{:}'.format(out_layer))
     tqdm.write("Done!")
+
+    if len(valid_dset) > 0:
+        tqdm.write("Get targets for validation...")
+        targets = get_targets(valid_dset, dx)
+        tqdm.write("Done!")
 
     tqdm.write("Define  correction factor (for class imbalance) ...")
     if correction_factor is None:
@@ -326,7 +318,7 @@ if __name__ == '__main__':
     tqdm.write("Get dataloaders...")
     train_loader = ECGBatchloader(train_dset, dx, batch_size=args.batch_size,
                                   length=args.seq_length, seed=args.seed)
-    valid_loader = ECGBatchloader(valid_dset, dx, batch_size=args.batch_size, length=args.seq_length)
+    valid_loader = ECGBatchloader(valid_dset, batch_size=args.batch_size, length=args.seq_length)
     tqdm.write("\t train:  {:d} ({:2.2f}%) ECG records divided into {:d} samples of fixed length"
                .format(len(train_dset), 100 * len(train_dset) / len(dset), len(train_loader))),
     tqdm.write("\t valid:  {:d} ({:2.2f}%) ECG records divided into {:d} samples of fixed length"
@@ -364,27 +356,35 @@ if __name__ == '__main__':
             pass
         tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
 
+    def compute_metrics(ep=-1):
+        # Evaluate
+        y_pred, y_score = evaluate(ep, model, out_layer, dx, correction_factor, valid_ids, valid_loader,
+                                   valid_classes, args.batch_size, args.pred_stage_type, device)
+        # Get metrics
+        y_true = dx.prepare_target(targets, valid_classes)
+        # Compute metrics
+        metrics = get_metrics(y_true, y_pred, y_score)
+        return metrics
+
     # run over all epochs
     epochs = args.epochs
     if only_test:
-        metrics, valid_loss = eval(-1, model, valid_loader, args.batch_size, args.pred_stage_type, device)
-        print_message(valid_loss, metrics)
+        metrics = compute_metrics()
+        # Print
+        print_message(metrics)
         epochs = start_epoch  # To avoid entering the loop
     for ep in range(start_epoch, epochs):
         # train
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
-        if len(valid_loader) > 0:
-            metrics, valid_loss = eval(ep, model, valid_loader, args.batch_size, args.pred_stage_type, device)
-        else:
-            metrics, valid_loss = None, None
+        metrics = compute_metrics(ep) if len(valid_loader) > 0 else None
         # Get learning rate
         learning_rate = 0
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        print_message(valid_loss, metrics, ep, learning_rate, train_loss)
+        print_message(metrics, ep, learning_rate, train_loss)
         # Save history
-        save_history(folder, history, learning_rate, train_loss, valid_loss, metrics, ep)
+        save_history(folder, history, learning_rate, train_loss, metrics, ep)
         # Call optimizer step
         scheduler.step()
         # Check if it is best metric
