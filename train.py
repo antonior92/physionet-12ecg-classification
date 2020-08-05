@@ -142,7 +142,7 @@ if __name__ == '__main__':
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
-                               help='batch size (default: 32).')
+                               help='train batch size (default: 32).')
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
@@ -183,6 +183,8 @@ if __name__ == '__main__':
     sys_parser = argparse.ArgumentParser(add_help=False)
     sys_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during training.')
+    config_parser.add_argument('--valid_batch_size', type=int, default=256,
+                               help='batch size used in validation (default: 256).')
     sys_parser.add_argument('--only_test', action='store_true',
                                help='just evaluate the model whithout any training step.')
     sys_parser.add_argument('--out_layer', type=str, default='softmax',
@@ -318,7 +320,7 @@ if __name__ == '__main__':
     tqdm.write("Get dataloaders...")
     train_loader = ECGBatchloader(train_dset, dx, batch_size=args.batch_size,
                                   length=args.seq_length, seed=args.seed)
-    valid_loader = ECGBatchloader(valid_dset, batch_size=args.batch_size, length=args.seq_length)
+    valid_loader = ECGBatchloader(valid_dset, batch_size=args.valid_batch_size, length=args.seq_length)
     tqdm.write("\t train:  {:d} ({:2.2f}%) ECG records divided into {:d} samples of fixed length"
                .format(len(train_dset), 100 * len(train_dset) / len(dset), len(train_loader))),
     tqdm.write("\t valid:  {:d} ({:2.2f}%) ECG records divided into {:d} samples of fixed length"
@@ -359,7 +361,7 @@ if __name__ == '__main__':
     def compute_metrics(ep=-1):
         # Evaluate
         y_pred, y_score = evaluate(ep, model, out_layer, dx, correction_factor, valid_ids, valid_loader,
-                                   valid_classes, args.batch_size, args.pred_stage_type, device)
+                                   valid_classes, args.valid_batch_size, args.pred_stage_type, device)
         # Get metrics
         y_true = dx.prepare_target(targets, valid_classes)
         # Compute metrics
