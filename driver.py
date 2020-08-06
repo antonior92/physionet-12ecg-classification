@@ -1,58 +1,29 @@
 #!/usr/bin/env python
 
-# BSD 2-Clause License
-# #
-# # Copyright (c) 2020, PhysioNet
-# # All rights reserved.
-# #
-# # Redistribution and use in source and binary forms, with or without
-# # modification, are permitted provided that the following conditions are met:
-# #
-# # * Redistributions of source code must retain the above copyright notice, this
-# #   list of conditions and the following disclaimer.
-# #
-# # * Redistributions in binary form must reproduce the above copyright notice,
-# #   this list of conditions and the following disclaimer in the documentation
-# #   and/or other materials provided with the distribution.
-# #
-# # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# # DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# # FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# # DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# # SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-import numpy as np
-import os
-import sys
+import numpy as np, os, sys
 from scipy.io import loadmat
 from run_12ECG_classifier import load_12ECG_model, run_12ECG_classifier
 
-
 def load_challenge_data(filename):
+
     x = loadmat(filename)
     data = np.asarray(x['val'], dtype=np.float64)
 
-    new_file = filename.replace('.mat', '.hea')
+    new_file = filename.replace('.mat','.hea')
     input_header_file = os.path.join(new_file)
 
-    with open(input_header_file, 'r') as f:
-        header_data = f.readlines()
+    with open(input_header_file,'r') as f:
+        header_data=f.readlines()
+
 
     return data, header_data
 
 
-def save_challenge_predictions(output_directory, filename, scores, labels, classes):
-    recording = os.path.splitext(filename)[0]
-    new_file = filename.replace('.mat', '.csv')
-    output_file = os.path.join(output_directory, new_file)
+def save_challenge_predictions(output_directory,filename,scores,labels,classes):
 
-    labels = np.asarray(labels, dtype=np.int)
-    scores = np.asarray(scores, dtype=np.float64)
+    recording = os.path.splitext(filename)[0]
+    new_file = filename.replace('.mat','.csv')
+    output_file = os.path.join(output_directory,new_file)
 
     # Include the filename as the recording number
     recording_string = '#{}'.format(recording)
@@ -64,57 +35,39 @@ def save_challenge_predictions(output_directory, filename, scores, labels, class
         f.write(recording_string + '\n' + class_string + '\n' + label_string + '\n' + score_string + '\n')
 
 
-# Find unique number of classes
-def get_classes(input_directory, files):
-    classes = set()
-    for f in files:
-        g = f.replace('.mat', '.hea')
-        input_file = os.path.join(input_directory, g)
-        with open(input_file, 'r') as f:
-            for lines in f:
-                if lines.startswith('#Dx'):
-                    tmp = lines.split(': ')[1].split(',')
-                    for c in tmp:
-                        classes.add(c.strip())
-
-    return sorted(classes)
-
-
 if __name__ == '__main__':
     # Parse arguments.
-    if len(sys.argv) != 3:
+    if len(sys.argv) != 4:
         raise Exception('Include the input and output directories as arguments, e.g., python driver.py input output.')
 
-    input_directory = sys.argv[1]
-    output_directory = sys.argv[2]
+    model_input = sys.argv[1]
+    input_directory = sys.argv[2]
+    output_directory = sys.argv[3]
 
     # Find files.
     input_files = []
     for f in os.listdir(input_directory):
-        if os.path.isfile(os.path.join(input_directory, f)) and not f.lower().startswith('.') and f.lower().endswith(
-                'mat'):
+        if os.path.isfile(os.path.join(input_directory, f)) and not f.lower().startswith('.') and f.lower().endswith('mat'):
             input_files.append(f)
 
     if not os.path.isdir(output_directory):
         os.mkdir(output_directory)
 
-    classes = get_classes(input_directory, input_files)
-
     # Load model.
     print('Loading 12ECG model...')
-    model = load_12ECG_model()
+    model = load_12ECG_model(model_input)
 
     # Iterate over files.
     print('Extracting 12ECG features...')
     num_files = len(input_files)
 
     for i, f in enumerate(input_files):
-        print('    {}/{}...'.format(i + 1, num_files))
-        tmp_input_file = os.path.join(input_directory, f)
-        data, header_data = load_challenge_data(tmp_input_file)
-        current_label, current_score = run_12ECG_classifier(data, header_data, classes, model)
+        print('    {}/{}...'.format(i+1, num_files))
+        tmp_input_file = os.path.join(input_directory,f)
+        data,header_data = load_challenge_data(tmp_input_file)
+        current_label, current_score,classes = run_12ECG_classifier(data,header_data, model)
         # Save results.
+        save_challenge_predictions(output_directory,f,current_score,current_label,classes)
 
-        save_challenge_predictions(output_directory, f, current_score, current_label, classes)
 
     print('Done.')

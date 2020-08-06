@@ -176,9 +176,16 @@ Look at `run_12ECG_classifier.py` to see how this model might be loaded.
 
 ## Scripts from the challenge
 
-There are two scripts that are provided by the challenge organizers `driver.py` and `evaluate_12ECG_score.py`.
+There are five scripts that are provided by the challenge organizers:
+- Two of them are used by the challenge organizers to run our entry. Namely, `driver.py` and `train_model.py` which
+respectively evaluate our model and train the model
+- One is used to evaluate the performance of given model predictions: `evaluate_12ECG_score.py`. We did some  small
+modifications in this one to easily allow it 
+- Finally two of them serve as interface to run and evaluate our model. Namely,  `run_12ECG_classifier.py` and 
+`train_12ECG_classifier.py` which implement the functions required by, respectively, `driver.py` and `train_model.py`
+to evaluate and train our model.
 
-The script `driver.py` can be used to obtain the model output in all entries of a given directory:
+The script `driver.py` can be used to compute the model output in all entries of a given directory:
 ```
 python driver.py input_directory output_directory
 ```
@@ -193,11 +200,33 @@ classification files. This script should populated the output director with file
 The PhysioNet/CinC 2020 webpage provides a training database with data files and 
 a description of the contents and structure of these files.
 
-This script is available from: https://github.com/physionetchallenges/python-classifier-2020
 
+The script `train_model.py` can be used to train the model in all entries of a given directory:
+```
+python train_model.py input_directory output_directory
+```
+Both scripts are available in: https://github.com/physionetchallenges/python-classifier-2020
 
 The script `evaluate_12ECG_score.py` is available in: https://github.com/physionetchallenges/evaluation-2020.
 It can use the output from `driver.py` to assess the model performance according to different scores.
 ````
 python evaluate_12ECG_score.py input_directory output_directory scores.csv
 ````
+
+
+## Running docker
+
+- Build docker
+```
+docker build -t physionet .
+```
+- Run and mount volumes
+```
+mkdir mdl
+mkdir out
+docker run -it -v \
+training_data:/physionet/training_data -v \
+mdl:/physionet/mdl -v \
+training_data:/physionet/test_data -v \
+out:/physionet/out gcr.io/deft-station-275520/quickstart-image:latest bash
+```

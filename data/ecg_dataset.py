@@ -7,7 +7,6 @@ import collections.abc as abc
 from collections import OrderedDict
 
 
-
 def resample_ecg(trace, input_freq, output_freq):
     trace = np.atleast_1d(trace).astype(float)
     if input_freq != int(input_freq):
@@ -74,7 +73,7 @@ def read_header(header_data):
         except:
             pass
 
-    return {'id': id, 'age': age, 'is_male': is_male, 'labels': labels,
+    return {'age': age, 'is_male': is_male, 'labels': labels,
             'baseline': baseline, 'gain_lead': gain_lead, 'freq': freq, 'signal_len': signal_len}
 
 
@@ -117,17 +116,17 @@ class ECGDataset(abc.Sequence):
         self.only_header = only_header
         self.id_to_idx = OrderedDict(zip(self.get_ids(self.input_file), range(len(self))))
 
-        if len(self) == 0:
-            raise ValueError('Dataset is empty.')
-
     def use_only_header(self, only_header=True):
         self.only_header = only_header
         return self
 
+    def get_id(self, file):
+        return os.path.split(file)[1].split('.mat')[0]
+
     def get_ids(self, files=None):
         if files is None:
             files = self.input_file
-        return [os.path.split(f)[1].split('.mat')[0] for f in files]
+        return [self.get_id(f) for f in files]
 
     def get_classes(self):
         classes = set()
@@ -153,7 +152,8 @@ class ECGDataset(abc.Sequence):
         return len(self.input_file)
 
     def _getsample(self, idx, only_header=False):
-        filename = os.path.join(self.input_folder, self.input_file[idx])
+        file = self.input_file[idx]
+        filename = os.path.join(self.input_folder, file)
 
         if only_header:
             data = None
@@ -165,7 +165,9 @@ class ECGDataset(abc.Sequence):
         input_header_file = os.path.join(new_file)
         with open(input_header_file, 'r') as f:
             header_data = f.readlines()
-        return get_sample(header_data, data, self.freq)
+        sample = get_sample(header_data, data, self.freq)
+        sample['id'] = self.get_id(file)
+        return sample
 
     def __getitem__(self, idx):
         if isinstance(idx, (int, np.int, np.int64)):
