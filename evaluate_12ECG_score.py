@@ -48,7 +48,7 @@ from warnings import warn
 
 def evaluate_12ECG_score(label_directory, output_directory):
     # Define the weights, the SNOMED CT code for the normal class, and equivalent SNOMED CT codes.
-    weights_file = 'weights.csv'
+    weights_file = 'dx/weights.csv'
     normal_class = '426783006'
     equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
 
@@ -93,8 +93,7 @@ def evaluate_12ECG_score(label_directory, output_directory):
     f_beta_measure, g_beta_measure = compute_beta_measures(labels, binary_outputs, beta=2)
 
     print('- Challenge metric...')
-    normal_index = classes.index(normal_class)
-    challenge_metric = compute_challenge_metric(weights, labels, binary_outputs, normal_index)
+    challenge_metric = compute_challenge_metric(weights, labels, binary_outputs, classes, normal_class)
 
     print('Done.')
 
