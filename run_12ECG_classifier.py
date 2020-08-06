@@ -2,7 +2,7 @@
 import torch
 import pandas as pd
 
-from train import evaluate
+from train import evaluate, compute_logits
 from utils import check_pretrain_model, check_model, get_model
 from data import get_sample
 from data.ecg_dataloader import SplitLongSignals
@@ -18,13 +18,16 @@ def run_12ECG_classifier(data, header_data, mdl):
               SplitLongSignals(sample, length=config_dict['seq_length'])]
     # Assign ids and subids
     l = len(traces)
-    ids, subids = [[sample['id']]] * l, [[si] for si in range(l)]
+    ID = 42  # 42 is arbitrary... Any other int would seve the purpose here
+    ids, subids = [[ID]] * l, [[si] for si in range(l)]
     # Get loader (which, unlike in train.py, is just a list)
     valid_loader = list(zip(traces, ids, subids))
+    # Compute logits
+    all_logits, ids, sub_ids = compute_logits(-1, model, valid_loader, device)
     # Compute prediction and score
-    y_pred, y_score = evaluate(-1, model, out_layer, dx, correction_factor, ids, valid_loader,
+    y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, [ID],
                                classes, 1, config_dict['pred_stage_type'], device)
-    return y_pred, y_score, classes
+    return list(y_pred.flatten()), list(y_score.flatten()), classes
 
 
 def load_12ECG_model(folder):
