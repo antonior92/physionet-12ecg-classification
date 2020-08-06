@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
+from copy import copy
 
 from models.resnet import ResNet1d
 from outlayers import DxMap, outlayer_from_str
@@ -27,12 +28,14 @@ class GetMetrics(object):
 
     def __call__(self, y_true, y_pred, y_score):
         """Return dictionary with relevant metrics"""
-        classes, y_true, y_pred, y_score = prepare_classes(self.classes, self.equivalent_classes,
+        classes = copy(self.classes)
+        y_true, y_pred, y_score = y_true.copy(), y_pred.copy(), y_score.copy()
+        classes, y_true, y_pred, y_score = prepare_classes(classes, self.equivalent_classes,
                                                            y_true, y_pred, y_score)
         weights = load_weights(self.path, classes)
         # Only consider classes that are scored with the Challenge metric.
         indices = np.any(weights, axis=0)  # Find indices of classes in weight matrix.
-        classes = [x for i, x in enumerate(self.classes) if indices[i]]
+        classes = [x for i, x in enumerate(classes) if indices[i]]
         y_true = y_true[:, indices]
         y_pred = y_pred[:, indices]
         y_score = y_score[:, indices]
@@ -252,14 +255,12 @@ def load_ids(folder, prefix=''):
         if len(str) == 0:
             raise ValueError
         train_ids = str.strip().split(',')
-        train_ids.sort()
 
     with open(fname(folder, 'valid_ids.txt', prefix), 'r') as f:
         str = f.read()
         if len(str) == 0:
             raise ValueError
         valid_ids = str.strip().split(',')
-        valid_ids.sort()
     return train_ids, valid_ids
 
 

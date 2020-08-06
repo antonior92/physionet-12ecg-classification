@@ -62,6 +62,7 @@ def compute_logits(ep, model, valid_loader, device):
     n_entries = 0
     all_logits = []
     all_ids = []
+    all_subids = []
     eval_desc = "Epoch {0:2d}: valid                 " if ep >= 0 else "valid"
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_loader),
                     desc=eval_desc.format(ep, 0), position=0)
@@ -77,6 +78,7 @@ def compute_logits(ep, model, valid_loader, device):
             # append
             all_logits.append(logits.detach().cpu())
             all_ids.extend(ids)
+            all_subids.extend(sub_ids)
             bs = traces.size(0)
             n_entries += bs
             # Print result
@@ -85,7 +87,7 @@ def compute_logits(ep, model, valid_loader, device):
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
         model[-1].reset()
-    return torch.cat(all_logits), all_ids
+    return torch.cat(all_logits), all_ids, all_subids
 
 
 def output_from_logits(out_layer, all_logits, batch_size, device):
@@ -104,11 +106,9 @@ def output_from_logits(out_layer, all_logits, batch_size, device):
     return torch.cat(all_outputs)
 
 
-def evaluate(ep, model, out_layer, dx, correction_factor, targets_ids, valid_loader,
+def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
              classes, batch_size, pred_stage_type, device):
-    # compute_logits
-    all_logits, ids = compute_logits(ep, model, valid_loader, device)
-    y_score = output_from_logits(out_layer, all_logits,  batch_size, device)
+    y_score = output_from_logits(out_layer, all_logits, batch_size, device)
     y_score = y_score.numpy()
     # Collapse entries with the same id:
     _, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type), unique_ids=targets_ids)
@@ -121,11 +121,10 @@ def evaluate(ep, model, out_layer, dx, correction_factor, targets_ids, valid_loa
     return y_pred, y_score
 
 
-# TODO:1) Include command line option to save logits.
-#  2) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
+# TODO:  1) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
 #  (i.e. deal with repeated classes)
-#  3) Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
-#  4) Merge check_model and check_pretrain_model into one single function?
+#  2) Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
+#  3) Merge check_model and check_pretrain_model into one single function?
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -209,6 +208,8 @@ if __name__ == '__main__':
     sys_parser.add_argument('--save_last', action='store_true',
                             help='if true save the last model, otherwise, save the best model'
                                  '(according to challenge metric).')
+    sys_parser.add_argument('--save_logits', action='store_true',
+                            help='if true save the logits together with the model.')
     sys_parser.add_argument('--folder', default=os.getcwd() + '/',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
@@ -265,6 +266,9 @@ if __name__ == '__main__':
         valid_ids = pretrain_valid_ids
     else:
         train_ids, valid_ids = get_data_ids(dset, settings.valid_split, settings.n_total, rng)
+    # Sort
+    train_ids.sort()
+    valid_ids.sort()
     # Save train, validation ids
     write_data_ids(folder, train_ids, valid_ids)
     # Get dataset
@@ -359,26 +363,35 @@ if __name__ == '__main__':
         tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
 
     def compute_metrics(ep=-1):
+        # compute_logits
+        all_logits, ids, sub_ids = compute_logits(ep, model, valid_loader, device)
         # Evaluate
-        y_pred, y_score = evaluate(ep, model, out_layer, dx, correction_factor, valid_ids, valid_loader,
+        y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
                                    valid_classes, args.valid_batch_size, args.pred_stage_type, device)
         # Get metrics
         y_true = dx.prepare_target(targets, valid_classes)
         # Compute metrics
         metrics = get_metrics(y_true, y_pred, y_score)
-        return metrics
+        index = pd.MultiIndex.from_tuples(list(zip(ids, sub_ids)), names=['ids', 'subids'])
+        return metrics, pd.DataFrame(data=all_logits.numpy(), index=index)
 
     # run over all epochs
     epochs = args.epochs
     if only_test:
-        metrics = compute_metrics()
+        metrics, logits = compute_metrics()
         # Print
         print_message(metrics)
+        # Save logits
+        if settings.save_logits and logits is not None:
+            logits.to_csv(os.path.join(folder, 'logits.csv'))
         epochs = start_epoch  # To avoid entering the loop
     for ep in range(start_epoch, epochs):
         # train
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
-        metrics = compute_metrics(ep) if len(valid_loader) > 0 else None
+        if len(valid_loader) > 0:
+            metrics, logits = compute_metrics(ep)
+        else:
+            None, None
         # Get learning rate
         learning_rate = 0
         for param_group in optimizer.param_groups:
@@ -401,6 +414,8 @@ if __name__ == '__main__':
                         'scheduler': scheduler.state_dict()},
                        os.path.join(folder, 'model.pth'))
             tqdm.write("Save model!")
+            if settings.save_logits and logits is not None:
+                logits.to_csv(os.path.join(folder, 'logits.csv'))
         # Update best metric
         if is_best_metric:
             best_challenge_metric = metrics['challenge_metric']
