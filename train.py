@@ -391,7 +391,7 @@ if __name__ == '__main__':
         if len(valid_loader) > 0:
             metrics, logits = compute_metrics(ep)
         else:
-            metrics, logits =  None, None
+            metrics, logits = None, None
         # Get learning rate
         learning_rate = 0
         for param_group in optimizer.param_groups:
