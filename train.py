@@ -201,7 +201,7 @@ if __name__ == '__main__':
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
-    config_parser.add_argument('--finetuning', type=bool, default=False,
+    config_parser.add_argument('--finetuning', action='store_true',
                                help='when there is a pre-trained model, by default it '
                                     'freezes the weights of the pre-trained model, but with this option'
                                     'these weight will be fine-tuned during training. Default is False')
@@ -243,7 +243,7 @@ if __name__ == '__main__':
                             help='Path to folder containing class information.')
     sys_parser.add_argument('--cuda', action='store_true',
                             help='use cuda for computations. (default: False)')
-    sys_parser.add_argument('--folder', default=os.getcwd() + '/', 
+    sys_parser.add_argument('--folder', default=os.getcwd() + '/',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
@@ -311,7 +311,7 @@ if __name__ == '__main__':
     n_valid = int(n_total * args.valid_split)
     n_train = n_total - n_valid
     if n_pretrain_ids > n_train:
-        tqdm.write("\t Training size extendeded to include all pretraining ids!")
+        tqdm.write("\t Training size extended to include all pretraining ids!")
         n_train = n_pretrain_ids
         n_valid = n_total - n_train
     # Get train and valid ids

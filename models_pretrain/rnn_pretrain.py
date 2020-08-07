@@ -44,4 +44,5 @@ class MyRNN(nn.Module):
         inp = traces[:, :, :-max_steps_ahead]  # Try to predict k steps ahead
         n = inp.size(2)
         target = torch.cat([traces[:, :, k:k + n] for k in self.k_steps_ahead], dim=1)
-        return inp, target
+        target_mask = torch.ones_like(target).bool().detach()
+        return inp, target, target_mask

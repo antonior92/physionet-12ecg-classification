@@ -1,3 +1,4 @@
+from tqdm import tqdm
 import math
 import torch.nn as nn
 import torch.distributions
@@ -15,41 +16,46 @@ class PretrainedTransformerBlock(nn.Module):
         self.N_LEADS = 12
         self.output_size = output_size
         self.steps_concat = pretrained.steps_concat
-        self.model_size = pretrained._modules['decoder'].in_features
+        self.model_size = pretrained.decoder._modules['0'].in_features
 
-        self.encoder = pretrained._modules['encoder']
-        self.pos_encoder = pretrained._modules['pos_encoder']
-        self.transformer_encoder = pretrained._modules['transformer_encoder']
+        self.encoder = pretrained.encoder
+        self.pos_encoder = pretrained.pos_encoder
+        self.transformer_encoder = pretrained.transformer_encoder
 
         if self.freeze:
+            tqdm.write("...transformer requires_grad set to False (no finetuning)...")
             for param in self.encoder.parameters():
                 param.requires_grad = False
             for param in self.pos_encoder.parameters():
                 param.requires_grad = False
             for param in self.transformer_encoder.parameters():
                 param.requires_grad = False
+        else:
+            tqdm.write("...transformer requires_grad set to True (finetuning)...")
 
         # self.encoder.out_features is also the output feature size of the transformer
-        self.decoder = nn.Linear(self.model_size, self.output_size * self.steps_concat)
+        self.decoder = nn.Linear(self.model_size, self.output_size)
 
     def forward(self, src):
-        _, n_feature, seq_len = src.shape
+        batch_size, n_feature, seq_len = src.shape
         # concatenate neighboring samples in feature channel
         src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
-        # put in the right shape for transformer
-        # src2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
-        src2 = src1.transpose(0, 1)
 
         # process data (no mask in transformer used)
-        src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
-        src4 = self.pos_encoder(src3)
-        out1 = self.transformer_encoder(src4)
-        out2 = self.decoder(out1)
-        # Go back to original, without neighboring samples concatenated
-        # out3.shape =  batch size, sequence length, n_feature
-        out3 = out2.transpose(0, 1).reshape(-1, seq_len, self.output_size)
-        # Put in the right shape for training stage input
-        output = out3.transpose(1, 2)
+        src2 = self.encoder(src1) * math.sqrt(self.N_LEADS)
+        src3 = self.pos_encoder(src2)
+        src4 = src3.transpose(0, 1)
+        src5 = self.transformer_encoder(src4)
+
+        # src5.shape = (seq_length / step_concat), batch_size, (dim_model * steps_concat)
+        # de-concatenate
+        out1 = src5.permute(1, 0, 2).reshape(batch_size, seq_len, -1)
+        out2 = out1.transpose(0, 1)
+        # decode
+        out3 = self.decoder(out2)
+        # out3.shape = seq_length, batch_size, decoder_size
+        # to right shape for training stage, i.e. batch_size, decoder_size, seq_length
+        output = out3.permute(1, 2, 0)
 
         return output
 
@@ -107,48 +113,57 @@ class MyTransformer(nn.Module):
         self.train_noise_std = args['train_noise_std']
         self.num_masked_samples = args['num_masked_samples']
         self.perc_masked_samples = args['perc_masked_samp']
-
         self.seq_len = args['seq_length']
+        # number of total subsequences of length num_masked_samples to be masked
+        self.num_subseq = int(self.perc_masked_samples * self.seq_len // self.num_masked_samples)
+        self.MASK_VAL = 10
+
         self.N_LEADS = 12
         self.dim_concat = int(self.N_LEADS * args['steps_concat'])
         self.dim_model = args["dim_model"]
+        self.emb_dim = self.dim_model * args['steps_concat']
         self.steps_concat = args['steps_concat']
 
-        self.encoder = nn.Linear(self.dim_concat, self.dim_model)
-        self.pos_encoder = PositionalEncoding(self.dim_model, args['dropout'])
-        encoder_layers = TransformerEncoderLayer(self.dim_model, args['num_heads'], args['dim_inner'], args['dropout'])
+        self.encoder = nn.Linear(self.dim_concat, self.emb_dim)
+        self.pos_encoder = PositionalEncoding(self.emb_dim, args['dropout_attn'])
+        encoder_layers = TransformerEncoderLayer(self.emb_dim, args['num_heads'],
+                                                 args['dim_inner'], args['dropout_attn'])
         self.transformer_encoder = TransformerEncoder(encoder_layers, args['num_trans_layers'])
         if self.trans_train_type.lower() == 'masking':
-            self.decoder = nn.Linear(self.dim_model, self.dim_concat)
+            self.dense = nn.Linear(self.dim_model, self.dim_model)
+            self.layer_norm = nn.LayerNorm(self.dim_model)
+            self.decoder_layer = nn.Linear(self.dim_model, self.N_LEADS)
+            self.decoder = nn.Sequential(
+                self.dense,
+                self.layer_norm,
+                nn.ReLU(),
+                self.decoder_layer
+            )
         elif self.trans_train_type.lower() == 'flipping':
-            self.decoder = nn.Linear(self.dim_model, self.N_LEADS)
+            self.decoder = nn.Linear(self.emb_dim, self.N_LEADS)
             self.decoder_class = nn.Linear(self.seq_len // self.steps_concat, 4)
 
     def forward(self, src, dummyvar):
-        _, n_feature, seq_len = src.shape
+
+        batch_size, n_feature, seq_len = src.shape
+
         # concatenate neighboring samples in feature channel
+        # since attention requires n^2 memory and flops with n=seq_length
         src1 = src.transpose(2, 1).reshape(-1, seq_len // self.steps_concat, n_feature * self.steps_concat)
-        # put in the right shape for transformer
-        # t2.shape = (sequence length / steps_concat), batch size, (N_LEADS * steps_concat)
-        src2 = src1.transpose(0, 1)
 
         # process data
-        src3 = self.encoder(src2) * math.sqrt(self.N_LEADS)
-        src4 = self.pos_encoder(src3)
-        out1 = self.transformer_encoder(src4)  # src_key_padding_mask=...
+        src2 = self.encoder(src1) * math.sqrt(self.N_LEADS)
+        src3 = self.pos_encoder(src2)
+        src4 = src3.transpose(0, 1)
+        src5 = self.transformer_encoder(src4)
 
-        if self.trans_train_type.lower() == 'masking':
-            out2 = self.decoder(out1)
-            # Go back to original, without neighboring samples concatenated
-            # out3.shape =  batch size, sequence length, n_feature
-            out3 = out2.transpose(0, 1).reshape(-1, seq_len, n_feature)
-            # Put in the right shape for transformer
-            output = out3.transpose(1, 2)
-        else:
-            out2 = self.decoder(out1)
-            out3 = out2.permute(1, 2, 0)
-            out4 = self.decoder_class(out3)
-            output = out4.view(-1, out4.size(-1))
+        # src5.shape = (seq_length / step_concat), batch_size, (dim_model * steps_concat)
+        # de-concatenate
+        out1 = src5.transpose(0, 1).reshape(batch_size, seq_len, -1)
+        out2 = out1.transpose(0, 1)
+        # decode
+        out3 = self.decoder(out2)
+        output = out3.permute(1, 2, 0)
 
         return output, []
 
@@ -157,42 +172,45 @@ class MyTransformer(nn.Module):
         return PretrainedTransformerBlock(self, output_size, freeze)
 
     def get_input_and_targets(self, traces):
-        """
-        self.mask = generate_random_sequence_mask(len(src2), len(src2), self.num_masked_samples, self.perc_masked_samples)
-        """
-
         # CASE: Masking
         if self.trans_train_type.lower() == 'masking':
-            inp = copy.deepcopy(traces)
-            # parameter
-            batch_size = traces.shape[0]
-            # FIRST: mask out random subsequences
-            # number of total subsequences of length num_masked_samples to be masked
-            # add a uniform random number U(-0.5,+0.5) for probabilistic rounding
-            temp = np.random.rand() - 0.5
-            num_subseq = int(self.perc_masked_samples * self.seq_len // self.num_masked_samples + temp)
-            # get inidices to mask out
-            # (better solution would be if each row in idx_ind would be sampled without replacement.
-            # Current solution allows doubling of masked out subsequences.
-            idx_ind = np.random.choice(self.seq_len // self.num_masked_samples, [batch_size, num_subseq])
-            idx_ind = torch.tensor(idx_ind) * self.num_masked_samples
-            idx = copy.deepcopy(idx_ind)
-            for i in range(1, self.num_masked_samples):
-                idx = torch.cat([idx, idx_ind + i], 1)
-            # mask all leads of the given indices
-            for i in range(batch_size):
-                inp[i, :, idx[i, :]] = 0
+            """
+            inp: input to the model, masked traces. All 12 leads are masked equally
+            target: model targets which are values of masked samples
+            """
+            def repeat_and_expand(mask_individ):
+                # repeat each column self.num_masked_samples times
+                temp = [col for col in mask_individ.t() for _ in range(self.num_masked_samples)]
+                masked_indices = torch.stack(temp).t()
+                # expand for N_LEADS
+                mask = masked_indices.unsqueeze(1).repeat(1, self.N_LEADS, 1)
+                return mask
 
-            # SECOND: add noise to input sequence
-            if self.train_noise_std > 0:
-                noise = torch.normal(torch.zeros(traces.shape), self.train_noise_std * torch.ones(traces.shape))
-                inp = inp + noise.to(device=traces.device)
-            else:
-                inp = inp
+            batch_size = traces.size(0)
+            inp = traces.clone()
+            target = traces.clone()
 
-            # return input, target
-            target = copy.deepcopy(traces)
-            return inp, target
+            # mask out random subsequences:
+            # generate probability matrix for 1 sample and then scale up to self.num_masked_samples
+            shape_individ = [batch_size, self.seq_len // self.num_masked_samples]
+            probability_matrix = torch.full(shape_individ, self.perc_masked_samples)
+            masked_indices_individ = torch.bernoulli(probability_matrix).bool()
+            masked_indices = repeat_and_expand(masked_indices_individ)
+
+            # 80% are masked by replacing the input with MASK_VAL
+            indices_replaced_individ = torch.bernoulli(torch.full(shape_individ, 0.8)).bool() & masked_indices_individ
+            indices_replaced = repeat_and_expand(indices_replaced_individ)
+            inp[indices_replaced] = self.MASK_VAL
+
+            # 10% are disturbed by noise
+            indices_random_individ = torch.bernoulli(torch.full(shape_individ, 0.5)).bool() & masked_indices_individ & ~indices_replaced_individ
+            indices_random = repeat_and_expand(indices_random_individ)
+            num_elem = indices_random.int().sum()
+            noise = torch.normal(torch.zeros(num_elem), self.train_noise_std * torch.ones(num_elem)).to(device=inp.device)
+            inp[indices_random] = inp[indices_random] + noise
+
+            # remaining 10% are left originally
+            return inp, target, masked_indices.detach()
 
         # CASE: Flipping
         if self.trans_train_type.lower() == 'flipping':
@@ -239,4 +257,6 @@ class MyTransformer(nn.Module):
                 elif flip_nr == 3:
                     inp[i, j, :] = f3(traces[i, j, :])
 
-            return inp, target.view(-1).to(device=inp.device)
+            target_out = target.view(-1).to(device=inp.device)
+            target_mask = torch.ones_like(target_out).bool().detach()
+            return inp, target_out, target_mask

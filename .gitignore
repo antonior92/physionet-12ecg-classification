@@ -137,6 +137,7 @@ dmypy.json
 .idea/
 /__pycache__/
 # stored models
-/server/*
-/evaluation_transformer/learning_curves/*
-/evaluation_transformer/masked_*
+/server*
+/evaluation_transformer/*
+/mdl*
+/driver_test_folder

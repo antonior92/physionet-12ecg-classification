@@ -16,6 +16,37 @@ from models_pretrain.rnn_pretrain import MyRNN
 from models_pretrain.transformerxl_pretrain import MyTransformerXL
 
 
+# TODO: move this function to utils.py once it is merged!!
+def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
+    from torch.optim.lr_scheduler import LambdaLR
+    """
+    Create a schedule with a learning rate that decreases linearly from the initial lr set in the optimizer to 0,
+    after a warmup period during which it increases linearly from 0 to the initial lr set in the optimizer.
+
+    Args:
+        optimizer (:class:`~torch.optim.Optimizer`):
+            The optimizer for which to schedule the learning rate.
+        num_warmup_steps (:obj:`int`):
+            The number of steps for the warmup phase.
+        num_training_steps (:obj:`int`):
+            The totale number of training steps.
+        last_epoch (:obj:`int`, `optional`, defaults to -1):
+            The index of the last epoch when resuming training.
+
+    Return:
+        :obj:`torch.optim.lr_scheduler.LambdaLR` with the appropriate schedule.
+    """
+
+    def lr_lambda(current_step: int):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        return max(
+            0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
+        )
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
 def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
     if train:
         model.train()
@@ -23,14 +54,15 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         model.eval()
     total_loss = 0
     n_entries = 0
+    learning_rate_now = 0
     str_name = 'train' if train else 'val'
-    desc = "Epoch {:2d}: {} - Loss: {:.6f}"
-    bar = tqdm(initial=0, leave=True, total=len(loader), desc=desc.format(ep, str_name, 0), position=0)
+    desc = "Epoch {:2d}: {} - Loss: {:2.3e} - LR: {:1.2e}"
+    bar = tqdm(initial=0, leave=True, total=len(loader), desc=desc.format(ep, str_name, 0, learning_rate_now), position=0)
     # create initial memory (required for transformer xl)
     mems = []
     if args.pretrain_model.lower() == 'transformerxl':
         param = next(model.parameters())
-        empty = torch.zeros(args.mem_len, args.batch_size, args.dim_model,
+        empty = torch.zeros(args.mem_len, args.batch_size, args.emb_dim,
                             dtype=param.dtype, device=param.device, requires_grad=False)
         for _ in range(args.num_trans_layers + 1):
             mems.append(empty)
@@ -40,14 +72,15 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
         traces, ids, sub_ids = batch
         traces = traces.to(device=device)
         # create model input and targets
-        inp, target = model.get_input_and_targets(traces)
+        inp, target, target_mask = model.get_input_and_targets(traces)
+        target_mask = target_mask.to(device=device)
         if args.pretrain_model.lower() == 'transformerxl':
             if len(mems) is not 0:
                 # reset memory depending on sub_ids (required for transformer xl)
                 # create mask to only change if sub_ids is zero
                 mask = (torch.tensor(sub_ids) != 0).float().to(device=param.device)
                 mask = mask[None, :, None]
-                mask = mask.repeat(args.mem_len, 1, args.dim_model)
+                mask = mask.repeat(args.mem_len, 1, args.emb_dim)
                 for j in range(args.num_trans_layers + 1):
                     mems[j] = mems[j] * mask
         if train:
@@ -55,22 +88,28 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
             model.zero_grad()
             # Forward pass
             output, mems = model(inp, mems)
-            ll = loss(output, target)
+            ll = loss(output*target_mask, target*target_mask)
             # Backward pass
             ll.backward()
             clip_grad_norm_(model.parameters(), args.clip_value)
             # Optimize
             optimizer.step()
+            # Call scheduler step
+            if args.pretrain_model.startswith('transformer'):
+                scheduler.step()
+            # get lr
+            for param_group in optimizer.param_groups:
+                learning_rate_now = param_group["lr"]
         else:
             with torch.no_grad():
                 output, mems = model(inp, mems)
-                ll = loss(output, target)
+                ll = loss(output*target_mask, target*target_mask)
         # Update
         total_loss += ll.detach().cpu().numpy()
         bs = traces.size(0)
         n_entries += bs
         # Update train bar
-        bar.desc = desc.format(ep, str_name, total_loss / n_entries)
+        bar.desc = desc.format(ep, str_name, total_loss / n_entries, learning_rate_now)
         bar.update(bs)
     bar.close()
     return total_loss / n_entries
@@ -79,8 +118,9 @@ def selfsupervised(ep, model, optimizer, loader, loss, device, args, train):
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
-    config_parser.add_argument('--pretrain_model', type=str, default='Transformer',
-                               help='type of pretraining net: LSTM, GRU, RNN, Transformer (default), Transformer XL')
+    config_parser.add_argument('--pretrain_model', choices=['lstm', 'gru', 'rnn', 'transformer', 'transformerxl'],
+                               default='lstm',
+                               help='type of pretraining net.')
     config_parser.add_argument('--seed', type=int, default=2,
                                help='random seed for number generator (default: 2)')
     config_parser.add_argument('--epochs', type=int, default=125,
@@ -94,8 +134,12 @@ if __name__ == '__main__':
                                help='batch size (default: 32).')
     config_parser.add_argument('--valid_split', type=float, default=0.30,
                                help='fraction of the data used for validation (default: 0.1).')
-    config_parser.add_argument('--lr', type=float, default=0.001,
-                               help='learning rate (default: 0.001)')
+    config_parser.add_argument('--lr_rnn', type=float, default=1e-3,
+                               help='learning rate for rnns (default: 1e-3)')
+    config_parser.add_argument('--lr_transformer', type=float, default=5e-5,
+                               help='learning rate for transformer (default: 5e-5)')
+    config_parser.add_argument('--warmup', type=int, default=100,
+                               help='number of warmup steps for transformer lr scheduler (default: 50)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
                                default=[40, 75, 100],
                                help='milestones for lr scheduler (default: [40, 75, 100])')
@@ -118,19 +162,19 @@ if __name__ == '__main__':
     # parameters for transformer network
     config_parser.add_argument('--num_heads', type=int, default=4,
                                help="Number of attention heads. Default is 4.")
-    config_parser.add_argument('--num_trans_layers', type=int, default=3,
+    config_parser.add_argument('--num_trans_layers', type=int, default=4,
                                help="Number of transformer blocks. Default is 4.")
-    config_parser.add_argument('--dim_model', type=int, default=256,
+    config_parser.add_argument('--dim_model', type=int, default=128,
                                help="Internal dimension of transformer. Default is 512.")
-    config_parser.add_argument('--dim_inner', type=int, default=768,
+    config_parser.add_argument('--dim_inner', type=int, default=128,
                                help="Size of the FF network in the transformer. Default is 2048.")
     config_parser.add_argument('--steps_concat', type=int, default=4,
                                help='number of concatenated time steps for model input. Default is 4')
+    config_parser.add_argument('--dropout_attn', type=float, default=0.1,
+                               help='attention mechanism dropout rate. Default is 0.1.')
     # additional parameters for transformer xl
     config_parser.add_argument('--mem_len', type=int, default=100,
                                help="Memory length of transformer xl. Default is 1000.")
-    config_parser.add_argument('--dropout_attn', type=float, default=0.2,
-                               help='attention mechanism dropout rate. Default is 0.2.')
     config_parser.add_argument('--init_std', type=float, default=0.02,
                                help='standard deviation of normal initialization. Default is 0.02.')
     # training types for transformer
@@ -183,6 +227,8 @@ if __name__ == '__main__':
     # Set seed
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
+    # Set learning rate
+    args.lr = args.lr_transformer if args.pretrain_model.startswith('transformer') else args.lr_rnn
 
     tqdm.write("Define dataset...")
     dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
@@ -229,14 +275,22 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define scheduler...")
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=args.lr_factor)
+    if args.pretrain_model.startswith('transformer'):
+        import math
+        num_train_steps = math.ceil(len(train_loader)/args.batch_size) * args.epochs
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup, num_training_steps=num_train_steps)
+    else:
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=args.lr_factor)
     tqdm.write("Done!")
 
     tqdm.write("Define loss...")
-    if args.trans_train_type.lower() == 'masking':
+    if args.pretrain_model.lower() in ['lstm', 'rnn', 'gru']:
         loss = nn.MSELoss(reduction='sum')
-    elif args.trans_train_type.lower() == 'flipping':
-        loss = nn.CrossEntropyLoss()
+    else:
+        if args.trans_train_type.lower() == 'masking':
+            loss = nn.MSELoss(reduction='sum')
+        elif args.trans_train_type.lower() == 'flipping':
+            loss = nn.CrossEntropyLoss()
     tqdm.write("Done!")
 
     history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", ])
@@ -275,5 +329,6 @@ if __name__ == '__main__':
                         'optimizer': optimizer.state_dict()},
                        os.path.join(folder, 'pretrain_final_model.pth'))
             tqdm.write("Save model!")
-        # Call optimizer step
-        scheduler.step()
+        # Call scheduler step
+        if not args.pretrain_model.startswith('transformer'):
+            scheduler.step()
