@@ -1,73 +1,47 @@
 #!/usr/bin/env python
-import os
-import json
 import torch
-from train import get_model
-from output_layer import OutputLayer, DxClasses
-from data import (get_sample)
+import pandas as pd
+
+from train import evaluate, compute_logits
+from utils import check_pretrain_model, check_model, get_model
+from data import get_sample
 from data.ecg_dataloader import SplitLongSignals
 
 
-def run_12ECG_classifier(data, header_data, classes, mdl):
+def run_12ECG_classifier(data, header_data, mdl):
     # Get model specifications
-    model, dx, out_layer, threshold, config_dict, device = mdl
+    model, dx, out_layer, correction_factor, classes, config_dict, device = mdl
     # Get sample
     sample = get_sample(header_data, data, config_dict['sample_freq'])
-    # Get trace
-    model.eval()
-    # Run model
-    with torch.no_grad():
-        # Get traces
-        traces = torch.stack([torch.tensor(s['data'], dtype=torch.float32, device=device) for s in
-                              SplitLongSignals(sample, length=config_dict['seq_length'])], dim=0)
-        # Apply model
-        logits = model(traces)
-        y_score = out_layer.get_output(logits).mean(dim=0).detach().cpu().numpy()
-
-        # Get threshold
-        y_pred = (y_score > threshold).astype(int)
-
-        # Reorder according to vector classes
-        y_score = dx.reorganize(y_score, classes, prob=True)
-        y_pred = dx.reorganize(y_pred, classes, prob=False)
-    return y_pred, y_score
+    # Get traces
+    traces = [torch.tensor(s['data'], dtype=torch.float32, device=device)[None, :, :] for s in
+              SplitLongSignals(sample, length=config_dict['seq_length'])]
+    # Assign ids and subids
+    l = len(traces)
+    ID = 42  # 42 is arbitrary... Any other int would seve the purpose here
+    ids, subids = [[ID]] * l, [[si] for si in range(l)]
+    # Get loader (which, unlike in train.py, is just a list)
+    valid_loader = list(zip(traces, ids, subids))
+    # Compute logits
+    all_logits, ids, sub_ids = compute_logits(-1, model, valid_loader, device)
+    # Compute prediction and score
+    y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, [ID],
+                               classes, 1, config_dict['pred_stage_type'], device)
+    return list(y_pred.flatten()), list(y_score.flatten()), classes
 
 
-def load_12ECG_model():
-    # Define model folder
-    model_folder = 'mdl/'
-
-    # Load check point
-    ckpt = torch.load(os.path.join(model_folder, 'model.pth'), map_location=lambda storage, loc: storage)
-
-    # Get config
-    config = os.path.join(model_folder, 'config.json')
-    with open(config, 'r') as f:
-        config_dict = json.load(f)
-
-    # get classes
-    dx = DxClasses.read_csv(os.path.join(model_folder, 'classes.txt'))
-
-    # Get pretrained stage config (if available)
-    try:
-        config_pretrain_stage = os.path.join(model_folder, 'pretrain_config.json')
-        with open(config_pretrain_stage, 'r') as f:
-            config_dict_pretrain_stage = json.load(f)
-    except:
-        config_dict_pretrain_stage = None
-
-    # Define model
-    model = get_model(config_dict, len(dx), config_dict_pretrain_stage)
-    model.load_state_dict(ckpt["model"])
-
-    # Device
+def load_12ECG_model(folder):
+    # Check if there is pretrained model in the given folder
+    config_dict_pretrain_stage, ckpt_pretrain_stage, _, _ = check_pretrain_model(folder)
+    # Check if there is a model in the given folder
+    config_dict, ckpt, dx, out_layer, correction_factor, _, _ = check_model(folder)
+    # running device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device)
-
-    # Threshold
-    threshold = ckpt['threshold']
-
-    # Output layer
-    out_layer = OutputLayer(max(config_dict['batch_size'], 1000), dx, device)
-
-    return model, dx, out_layer, threshold, config_dict, device
+    # Get all classes to be scored
+    df = pd.read_csv('dx/dx_mapping_scored.csv')
+    classes = [str(c) for c in list(df['SNOMED CT Code'])]
+    # get model
+    model = get_model(config_dict, len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)
+    model.load_state_dict(ckpt["model"])
+    model.to(device=device)
+    return model, dx, out_layer, correction_factor, classes, config_dict, device

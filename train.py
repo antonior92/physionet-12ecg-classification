@@ -1,89 +1,17 @@
-import os
-import json
 import argparse
 import torch
-import datetime
 import random
 import pandas as pd
-import torch.nn as nn
 from warnings import warn
-from data import *
 from tqdm import tqdm
+from outlayers import DxMap, outlayer_from_str
 
-from data.ecg_dataloader import ECGBatchloader
-from models.resnet import ResNet1d
-from models.mlp import MlpClassifier
-from models.prediction_model import RNNPredictionStage, LinearPredictionStage
-from output_layer import OutputLayer, collapse, DxClasses, get_collapse_fun
-from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
-                                  compute_challenge_metric, load_weights)
-
-
-class GetMetrics(object):
-
-    def __init__(self, weights, normal_index=None):
-        """Compute metrics"""
-        self.weights = weights
-        self.normal_index = normal_index
-
-    def __call__(self, y_true, y_pred, y_score):
-        """Return dictionary with relevant metrics"""
-        auroc, auprc = compute_auc(y_true, y_score)
-        accuracy = compute_accuracy(y_true, y_pred)
-        f_measure = compute_f_measure(y_true, y_pred)
-        f_beta, g_beta = compute_beta_measures(y_true, y_pred, beta=2)
-        challenge_metric = compute_challenge_metric(self.weights, y_true, y_pred, self.normal_index)
-        geometric_mean = np.sqrt(f_beta * g_beta)
-        return {'acc': accuracy, 'f_measure': f_measure, 'f_beta': f_beta, 'g_beta': g_beta,
-                'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
-
-
-def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
-    N_LEADS = 12
-    n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
-    removed_blocks = 0
-    for l in config['net_seq_length']:
-        if l > config['seq_length']:
-            del config['net_seq_length'][0]
-            del config['net_filter_size'][0]
-            removed_blocks += 1
-    if removed_blocks > 0:
-        warn("The output of the pretrain stage is not consistent with the conv net "
-             "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
-             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
-    # Get main model
-    res_net = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
-                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
-                       kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
-    # Get final prediction stage
-    if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
-        pred_stage = RNNPredictionStage(config, n_classes)
-    else:
-        n_filters_last = config['net_filter_size'][-1]
-        n_samples_last = config['net_seq_length'][-1]
-        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last * n_samples_last, n_classes=n_classes)
-    # get pretrain model if available and combine all models
-    if pretrain_stage_config is None:
-        # combine the models
-        model = nn.Sequential(res_net, pred_stage)
-    else:
-        if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
-            pretrained = MyRNN(pretrain_stage_config)
-        elif pretrain_stage_config['pretrain_model'].lower() == 'transformer':
-            pretrained = MyTransformer(pretrain_stage_config)
-        elif pretrain_stage_config['pretrain_model'].lower() == 'transformerxl':
-            pretrained = MyTransformerXL(pretrain_stage_config)
-        if pretrain_stage_ckpt is not None:
-            pretrained.load_state_dict(pretrain_stage_ckpt['model'])
-        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
-        # combine the models
-        if config['eval_transformer']:
-            small_clf = MlpClassifier(config, n_classes, pretrain_stage_config)
-            model = nn.Sequential(ptrmdl, small_clf)
-        else:
-            model = nn.Sequential(ptrmdl, res_net, pred_stage)
-    return model
+from data import *
+from utils import set_output_folder, check_pretrain_model, get_data_ids, \
+    write_data_ids, get_model, GetMetrics, get_output_layer, \
+    get_correction_factor, check_model, save_config, initialize_history, save_history, \
+    print_message, get_targets, update_history
+from outlayers import collapse, get_collapse_fun
 
 
 # %% Train model
@@ -129,48 +57,74 @@ def train(ep, model, optimizer, train_loader, out_layer, device, shuffle):
     return total_loss / n_entries
 
 
-def evaluate(ep, model, valid_loader, out_layer, device):
+def compute_logits(ep, model, valid_loader, device):
     model.eval()
-    total_loss = 0
     n_entries = 0
-    all_outputs = []
-    all_targets = []
+    all_logits = []
     all_ids = []
-    eval_desc = "Epoch {0:2d}: valid - Loss: {1:.6f}" if ep >= 0 \
-        else "{valid - Loss: {1:.6f}"
+    all_subids = []
+    eval_desc = "Epoch {0:2d}: valid                 " if ep >= 0 else "valid"
     eval_bar = tqdm(initial=0, leave=True, total=len(valid_loader),
                     desc=eval_desc.format(ep, 0), position=0)
     for i, batch in enumerate(valid_loader):
         with torch.no_grad():
-            traces, target, ids, sub_ids = batch
+            traces, ids, sub_ids = batch
             traces = traces.to(device=device)
-            target = target.to(device=device)
             # update sub_ids for final prediction stage model
             if model[-1]._get_name() == 'RNNPredictionStage':
                 model[-1].update_sub_ids(sub_ids)
             # Forward pass
             logits = model(traces)
-            output = out_layer.get_output(logits)
-            # Loss
-            loss = out_layer.loss(logits, target)
-            # Get loss
-            total_loss += loss.detach().cpu().numpy()
             # append
-            all_targets.append(target.detach().cpu().numpy())
-            all_outputs.append(output.detach().cpu().numpy())
+            all_logits.append(logits.detach().cpu())
             all_ids.extend(ids)
-            bs = target.size(0)
+            all_subids.extend(sub_ids)
+            bs = traces.size(0)
             n_entries += bs
             # Print result
-            eval_bar.desc = eval_desc.format(ep, total_loss / n_entries)
             eval_bar.update(bs)
     eval_bar.close()
     # reset prediction stage variables
     if model[-1]._get_name() == 'RNNPredictionStage':
         model[-1].reset()
-    return total_loss / n_entries, np.concatenate(all_outputs), np.concatenate(all_targets), all_ids
+    return torch.cat(all_logits), all_ids, all_subids
 
 
+def output_from_logits(out_layer, all_logits, batch_size, device):
+    n_entries = all_logits.shape[0]
+    all_outputs = []
+    n_batches = int(np.ceil(n_entries / batch_size))
+    end = 0
+    for i in range(n_batches):
+        start = end
+        end = min(start + batch_size, n_entries)
+        logits = all_logits[start:end, :]
+        logits = logits.to(device)
+        # Outputs
+        outputs = out_layer(logits)
+        all_outputs.append(outputs.detach().cpu())
+    return torch.cat(all_outputs)
+
+
+def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
+             classes, batch_size, pred_stage_type, device):
+    y_score = output_from_logits(out_layer, all_logits, batch_size, device)
+    y_score = y_score.numpy()
+    # Collapse entries with the same id:
+    _, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type), unique_ids=targets_ids)
+    # Correct for class imbalance
+    y_score = y_score * correction_factor
+    # Get zero one prediction
+    y_pred_aux = out_layer.get_prediction(y_score)
+    y_pred = dx.prepare_target(y_pred_aux, classes)
+    y_score = dx.prepare_probabilities(y_score, classes)
+    return y_pred, y_score
+
+
+# TODO:  1) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
+#  (i.e. deal with repeated classes)
+#  2) Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
+#  3) Merge check_model and check_pretrain_model into one single function?
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -187,9 +141,7 @@ if __name__ == '__main__':
                                help='size (in # of samples) for all traces. If needed traces will be zeropadded'
                                     'to fit into the given size. (default: 4096)')
     config_parser.add_argument('--batch_size', type=int, default=32,
-                               help='batch size (default: 32).')
-    config_parser.add_argument('--valid_split', type=float, default=0.30,
-                               help='fraction of the data used for validation (default: 0.1).')
+                               help='train batch size (default: 32).')
     config_parser.add_argument('--lr', type=float, default=0.001,
                                help='learning rate (default: 0.001)')
     config_parser.add_argument('--milestones', nargs='+', type=int,
@@ -206,8 +158,8 @@ if __name__ == '__main__':
                                     'freezes the weights of the pre-trained model, but with this option'
                                     'these weight will be fine-tuned during training. Default is False')
     config_parser.add_argument('--eval_transformer', type=bool, default=False,
-                               help='Evaluates the transformer. If true a small MLP classifier is chosen instead of the '
-                                    'ResNet + prediction stage (default: False).')
+                               help='Evaluates the transformer. If true a small MLP classifier is chosen instead of '
+                                    'the ResNet + prediction stage (default: False).')
     # Model parameters
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
@@ -217,9 +169,6 @@ if __name__ == '__main__':
                                help='dropout rate (default: 0.5).')
     config_parser.add_argument('--kernel_size', type=int, default=17,
                                help='kernel size in convolutional layers (default: 17).')
-    config_parser.add_argument('--n_total', type=int, default=-1,
-                               help='number of samples to be used during training. By default use '
-                                    'all the samples available. Useful for quick tests.')
     # Final Predictor parameters
     config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'mean', 'max'], default='mean',
                                help='type of prediction stage model: lstm, gru, rnn, mean (default), max.')
@@ -227,101 +176,104 @@ if __name__ == '__main__':
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
                                help='size of hidden layer in prediction stage rnn (default: 30).')
-    config_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
-                               help='what classes are to be used during training.')
     config_parser.add_argument('--valid_classes', choices=['dset', 'scored'], default='scored_classes',
                                help='what classes are to be used during evaluation.')
-    config_parser.add_argument('--outlayer', choices=['sigmoid', 'sigmoid-and-softmax', 'softmax'], default='softmax',
-                               help='what is the type used for the output layer. Options are '
-                                    '(sigmoid, sigmoid-and-softmax, softmax).')
-    args, rem_args = config_parser.parse_known_args()
-    # System setting
+    # System settings
     sys_parser = argparse.ArgumentParser(add_help=False)
+    sys_parser.add_argument('--train_classes', choices=['dset', 'scored'], default='scored_classes',
+                               help='what classes are to be used during training.')
+    config_parser.add_argument('--valid_batch_size', type=int, default=256,
+                               help='batch size used in validation (default: 256).')
+    sys_parser.add_argument('--only_test', action='store_true',
+                               help='just evaluate the model whithout any training step.')
+    sys_parser.add_argument('--out_layer', type=str, default='softmax',
+                               help='what is the type used for the output layer. Options are '
+                                    '(sigmoid, softmax) or the name of .txt files in dx with the correct format.')
+    sys_parser.add_argument('--valid_split', type=float, default=0.30,
+                            help='fraction of the data used for validation (default: 0.3).')
+    sys_parser.add_argument('--n_total', type=int, default=-1,
+                            help='number of samples to be used during training. By default use '
+                                 'all the samples available. Useful for quick tests.')
+    sys_parser.add_argument('--expected_class_distribution', choices=['uniform', 'train'], default='uniform',
+                            help="The expected distribution of classes. If 'uniform' consider uniform distribution."
+                                 "If 'train' consider the distribution observed in the training dataset."
+                                 "The classifier will be corrected to account for this prior information"
+                                 "on the distribution of the classes.")
     sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
                             help='Path to folder containing class information.')
-    sys_parser.add_argument('--cuda', action='store_true',
-                            help='use cuda for computations. (default: False)')
+    sys_parser.add_argument('--no_cuda', action='store_true',
+                            help='do not use cuda for computations, even if available. (default: False)')
+    sys_parser.add_argument('--save_last', action='store_true',
+                            help='if true save the last model, otherwise, save the best model'
+                                 '(according to challenge metric).')
+    sys_parser.add_argument('--save_logits', action='store_true',
+                            help='if true save the logits together with the model.')
     sys_parser.add_argument('--folder', default=os.getcwd() + '/',
                             help='output folder. If we pass /PATH/TO/FOLDER/ ending with `/`,'
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
                                  'in the folder provided.')
 
-    settings, unk = sys_parser.parse_known_args(rem_args)
+    settings, rem_args = sys_parser.parse_known_args()
+
+    # Set device
+    use_cuda = not settings.no_cuda and torch.cuda.is_available()
+    device = torch.device('cuda:0' if use_cuda else 'cpu')
+    if use_cuda:
+        tqdm.write("Using gpu!")
+    # Generate output folder if needed and save config file
+    folder = set_output_folder(settings.folder)
+    # Check if there is pretrained model in the given folder
+    config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids, _ = check_pretrain_model(folder)
+    pretrain_train_ids, pretrain_valid_ids = pretrain_ids
+    # Check if there is a model in the given folder
+    config_dict, ckpt, dx, out_layer, correction_factor, ids, history = check_model(folder)
+    train_ids, valid_ids = ids
+    # Set defaults according to the configuration file inside the folder
+    if config_dict is not None:
+        config_parser.set_defaults(**config_dict)
+    # get configurations
+    args, unk = config_parser.parse_known_args(rem_args)
     #  Final parser is needed for generating help documentation
     parser = argparse.ArgumentParser(parents=[sys_parser, config_parser])
     _, unk = parser.parse_known_args(unk)
     # Check for unknown options
     if unk:
         warn("Unknown arguments:" + str(unk) + ".")
-
-    # Set device
-    device = torch.device('cuda:0' if settings.cuda else 'cpu')
-    # Generate output folder if needed and save config file
-    if settings.folder[-1] == '/':
-        folder = os.path.join(settings.folder, 'output_' +
-                              str(datetime.datetime.now()).replace(":", "_").replace(" ", "_").replace(".", "_"))
-    else:
-        folder = settings.folder
-    try:
-        os.makedirs(folder)
-    except FileExistsError:
-        pass
-    with open(os.path.join(folder, 'config.json'), 'w') as f:
-        json.dump(vars(args), f, indent='\t')
+    # Save in folder
+    if config_dict is None:
+        save_config(folder, args)
     # Set seed
     torch.manual_seed(args.seed)
     rng = random.Random(args.seed)
-    # Check if there is pretrained model in the given folder
-    try:
-        ckpt_pretrain_stage = torch.load(os.path.join(folder, 'pretrain_model.pth'),
-                                         map_location=lambda storage, loc: storage)
-        config_pretrain_stage = os.path.join(folder, 'pretrain_config.json')
-        with open(config_pretrain_stage, 'r') as f:
-            config_dict_pretrain_stage = json.load(f)
-        tqdm.write("Found pretrained model!")
-        with open(os.path.join(folder, 'pretrain_train_ids.txt'), 'r') as f:
-            pretrain_ids = f.read().split(',')
-        # Import pretrain only if needed
-        from pretrain import MyRNN, MyTransformer, MyTransformerXL
-    except:
-        ckpt_pretrain_stage = None
-        config_dict_pretrain_stage = None
-        pretrain_ids = []
-        tqdm.write("Did not found pretrained model!")
+    # Define only_test variable
+    only_test = settings.only_test or settings.valid_split >= 1.0
 
     tqdm.write("Define dataset...")
-    dset = ECGDataset(settings.input_folder, freq=args.sample_freq)
+    dset = ECGDataset.from_folder(settings.input_folder, freq=args.sample_freq)
+    if len(dset) == 0:
+        raise ValueError('Dataset is empty.')
     tqdm.write("Done!")
 
     tqdm.write("Define train and validation splits...")
-    all_ids = dset.get_ids()
-    set_all_ids = set(all_ids)
-    # Get pretrained ids
-    pretrain_ids = list(set_all_ids.intersection(pretrain_ids))  # Get only pretrain ids available
-    other_ids = list(set_all_ids.difference(pretrain_ids))
-    pretrain_ids.sort()  # to get deterministic behaviour
-    other_ids.sort()  # to get deterministic behaviour
-    rng.shuffle(other_ids)
-    n_pretrain_ids = len(pretrain_ids)
-    # Get length
-    n_total = len(dset) if args.n_total <= 0 else min(args.n_total, len(dset))
-    n_valid = int(n_total * args.valid_split)
-    n_train = n_total - n_valid
-    if n_pretrain_ids > n_train:
-        tqdm.write("\t Training size extended to include all pretraining ids!")
-        n_train = n_pretrain_ids
-        n_valid = n_total - n_train
-    # Get train and valid ids
-    train_ids = other_ids[:n_train - n_pretrain_ids] + pretrain_ids
-    valid_ids = other_ids[n_train - n_pretrain_ids:n_total - n_pretrain_ids]
-    # Save train and test ids
-    with open(os.path.join(folder, 'train_ids.txt'), 'w') as f:
-        f.write(','.join(train_ids))
-    with open(os.path.join(folder, 'valid_ids.txt'), 'w') as f:
-        f.write(','.join(valid_ids))
+    # if pretrained ids are available (not empty)
+    if train_ids and valid_ids:
+        pass
+    elif pretrain_train_ids and pretrain_valid_ids:
+        train_ids = pretrain_train_ids
+        valid_ids = pretrain_valid_ids
+    else:
+        train_ids, valid_ids = get_data_ids(dset, settings.valid_split, settings.n_total, rng)
+    # Sort
+    train_ids.sort()
+    valid_ids.sort()
+    # Save train, validation ids
+    write_data_ids(folder, train_ids, valid_ids)
+    # Get dataset
+    train_dset = dset.get_subdataset(train_ids)
+    valid_dset = dset.get_subdataset(valid_ids)
     tqdm.write("Done!")
 
     tqdm.write("Define output layer...")
@@ -330,116 +282,140 @@ if __name__ == '__main__':
     # Get all classes to be scored
     df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
     scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]
-    # Get training classes
-    train_classes = dset_classes if args.train_classes == 'dset' else scored_classes
+    # Get classes to be taken under consideration
     valid_classes = dset_classes if args.valid_classes == 'dset' else scored_classes
-    # Get mutually exclusive entries
-    if args.outlayer == 'sigmoid-and-softmax':
-        with open(os.path.join(settings.dx, 'mutually_exclusivity.txt'), 'r') as file:
-            mutually_exclusive = [line.split(',') for line in file.read().split('\n')]
-        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
-            null_class = file.read()
-        dx = DxClasses(train_classes, mutually_exclusive, null_class)
-    if args.outlayer == 'softmax':
-        with open(os.path.join(settings.dx, 'null_class.txt'), 'r') as file:
-            null_class = file.read()
-        mutually_exclusive = [list(set(train_classes).difference([null_class]))]
-        dx = DxClasses(train_classes, mutually_exclusive, null_class)
+    # Get outlayer and map
+    if (dx is None) and (out_layer is None):
+        if settings.out_layer in ['softmax', 'sigmoid']:
+            # Get output layer classes
+            train_classes = dset_classes if settings.train_classes == 'dset' else scored_classes
+            out_layer = outlayer_from_str(settings.out_layer)
+            dx = DxMap.infer_from_out_layer(train_classes, out_layer)
+        else:
+            path_to_outmap = os.path.join(settings.dx, settings.out_layer + '.txt')
+            out_layer, dx = get_output_layer(path_to_outmap)
+        with open(os.path.join(folder, 'out_layer.txt'), 'w') as f:
+            f.write('{:}\n{:}'.format(out_layer, dx))
     else:
-        dx = DxClasses(train_classes)
-    out_layer = OutputLayer(args.batch_size, dx, device)
+        tqdm.write("\tUsing pre-specified outlayer!")
+    tqdm.write('\t{:}'.format(out_layer))
+    tqdm.write("Done!")
+
+    if len(valid_dset) > 0:
+        tqdm.write("Get targets for validation...")
+        targets = get_targets(valid_dset, dx)
+        tqdm.write("Done!")
+
+    tqdm.write("Define  correction factor (for class imbalance) ...")
+    if correction_factor is None:
+        correction_factor = get_correction_factor(dset, dx, settings.expected_class_distribution)
+        np.savetxt(os.path.join(folder, 'correction_factor.txt'), correction_factor, fmt='%.10f')
+    else:
+        tqdm.write("\tUsing pre-specified correction factor!")
+    tqdm.write("\tCorrection factor = {:}".format(str(list(correction_factor))))
     tqdm.write("Done!")
 
     tqdm.write("Define metrics...")
-    weights = load_weights(os.path.join(settings.dx, 'weights.csv'), valid_classes)
-    NORMAL = '426783006'
-    get_metrics = GetMetrics(weights, valid_classes.index(NORMAL))
+    normal_class = '426783006'
+    equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
+    get_metrics = GetMetrics(os.path.join(settings.dx, 'weights.csv'), valid_classes, normal_class, equivalent_classes)
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
-    train_loader = ECGBatchloader(dset, train_ids, dx, batch_size=args.batch_size,
+    train_loader = ECGBatchloader(train_dset, dx, batch_size=args.batch_size,
                                   length=args.seq_length, seed=args.seed)
-    valid_loader = ECGBatchloader(dset, valid_ids, dx, batch_size=args.batch_size, length=args.seq_length)
-    tqdm.write("\t train:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
-               .format(n_train, 100 * n_train / n_total, len(train_loader))),
-    tqdm.write("\t valid:  {:d} ({:2.2f}\%) ECG records divided into {:d} samples of fixed length"
-               .format(n_valid, 100 * n_valid / n_total, len(valid_loader)))
-    tqdm.write("Done!")
-
-    tqdm.write("Define threshold ...")
-    threshold = dx.compute_threshold(dset, train_ids)
-    tqdm.write("\t threshold = train_ocurrences / train_samples (for each abnormality)")
-    tqdm.write("\t\t\t   = " + ', '.join(["{:}:{:.3f}".format(c, threshold[i]) for i, c in enumerate(dx.code)]))
+    valid_loader = ECGBatchloader(valid_dset, batch_size=args.valid_batch_size, length=args.seq_length)
+    tqdm.write("\t train:  {:d} ({:2.2f}%) ECG records divided into {:d} samples of fixed length"
+               .format(len(train_dset), 100 * len(train_dset) / len(dset), len(train_loader))),
+    tqdm.write("\t valid:  {:d} ({:2.2f}%) ECG records divided into {:d} samples of fixed length"
+               .format(len(valid_dset), 100 * len(valid_dset) / len(dset), len(valid_loader)))
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
     model = get_model(vars(args), len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)
+    if ckpt is not None:
+        model.load_state_dict(ckpt["model"])
     model.to(device=device)
     tqdm.write("Done!")
 
     tqdm.write("Define optimizer...")
     optimizer = torch.optim.Adam(model.parameters(), args.lr)
+    if ckpt is not None:
+        optimizer.load_state_dict(ckpt["optimizer"])
     tqdm.write("Done!")
 
     tqdm.write("Define scheduler...")
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=args.lr_factor)
+    if ckpt is not None:
+        scheduler.load_state_dict(ckpt["scheduler"])
     tqdm.write("Done!")
 
-    history = pd.DataFrame(columns=["epoch", "train_loss", "valid_loss", "lr", "f_beta", "g_beta", "geom_mean"])
+    tqdm.write("Start training...")
+    start_epoch = 0 if ckpt is None else ckpt['epoch']+1
     best_challenge_metric = -np.Inf
-    # run over all epochs
-    for ep in range(args.epochs):
-        # Train and evaluate
-        train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
-        valid_loss, y_score, all_targets, ids = evaluate(ep, model, valid_loader, out_layer, device)
-        # Collapse entries with the same id:
-        unique_ids, y_score = collapse(y_score, ids, fn=get_collapse_fun(args.pred_stage_type))
-        # Get zero one prediction
-        y_pred_aux = dx.apply_threshold(y_score, threshold)
-        y_pred = dx.target_to_binaryclass(y_pred_aux)
-        y_pred = dx.reorganize(y_pred, valid_classes, prob=False)
-        y_score = dx.reorganize(y_score, valid_classes, prob=True)
+    if history is None:
+        history = initialize_history()
+    else:
+        try:
+            best_challenge_metric = max(history[history['epoch'] == ckpt['epoch']]['challenge_metric'])
+        except:
+            pass
+        tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
+
+    def compute_metrics(ep=-1):
+        # compute_logits
+        all_logits, ids, sub_ids = compute_logits(ep, model, valid_loader, device)
+        # Evaluate
+        y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
+                                   valid_classes, args.valid_batch_size, args.pred_stage_type, device)
         # Get metrics
-        y_true = dx.target_to_binaryclass(all_targets)
-        _, y_true = collapse(y_true, ids, fn=lambda y: y[0, :], unique_ids=unique_ids)
-        y_true = dx.reorganize(y_true, valid_classes)
+        y_true = dx.prepare_target(targets, valid_classes)
+        # Compute metrics
         metrics = get_metrics(y_true, y_pred, y_score)
+        index = pd.MultiIndex.from_tuples(list(zip(ids, sub_ids)), names=['ids', 'subids'])
+        return metrics, pd.DataFrame(data=all_logits.numpy(), index=index)
+
+    # run over all epochs
+    epochs = args.epochs
+    if only_test:
+        metrics, logits = compute_metrics()
+        # Print
+        print_message(metrics)
+        # Save logits
+        if settings.save_logits and logits is not None:
+            logits.to_csv(os.path.join(folder, 'logits.csv'))
+        epochs = start_epoch  # To avoid entering the loop
+    for ep in range(start_epoch, epochs):
+        # train
+        train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
+        if len(valid_loader) > 0:
+            metrics, logits = compute_metrics(ep)
+        else:
+            metrics, logits = None, None
         # Get learning rate
+        learning_rate = 0
         for param_group in optimizer.param_groups:
             learning_rate = param_group["lr"]
         # Print message
-        message = 'Epoch {:2d}: \tTrain Loss {:.6f} ' \
-                  '\tValid Loss {:.6f} \tLearning Rate {:.7f}\t' \
-                  'Fbeta: {:.3f} \tGbeta: {:.3f} \tChallenge: {:.3f}' \
-            .format(ep, train_loss, valid_loss, learning_rate,
-                    metrics['f_beta'], metrics['g_beta'],
-                    metrics['challenge_metric'])
-        tqdm.write(message)
+        print_message(metrics, ep, learning_rate, train_loss)
         # Save history
-        history = history.append({"epoch": ep, "train_loss": train_loss, "valid_loss": valid_loss,
-                                  "lr": learning_rate, "f_beta": metrics['f_beta'],
-                                  "g_beta": metrics['g_beta'], "geom_mean": metrics['geom_mean'],
-                                  'challenge_metric': metrics['challenge_metric']},
-                                 ignore_index=True)
-        history.to_csv(os.path.join(folder, 'history.csv'), index=False)
-
-        # Save best model
-        if best_challenge_metric < metrics['challenge_metric']:
-            # Save model
-            torch.save({'epoch': ep,
-                        'threshold': threshold,
-                        'model': model.state_dict(),
-                        'optimizer': optimizer.state_dict()},
-                       os.path.join(folder, 'model.pth'))
-            # Update best validation loss
-            best_challenge_metric = metrics['challenge_metric']
-            tqdm.write("Save model!")
+        history = update_history(history, learning_rate, train_loss, metrics, ep)
+        save_history(folder, history)
         # Call optimizer step
         scheduler.step()
-        # Save last model
-        if ep == args.epochs - 1:
-            torch.save({'threshold': threshold,
+        # Check if it is best metric
+        is_best_metric = best_challenge_metric < metrics['challenge_metric'] if metrics is not None else False
+        # Save best model
+        if (settings.save_last and (ep == args.epochs - 1)) or is_best_metric:
+            # Save model
+            torch.save({'epoch': ep,
                         'model': model.state_dict(),
-                        'optimizer': optimizer.state_dict()},
-                       os.path.join(folder, 'final_model.pth'))
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict()},
+                       os.path.join(folder, 'model.pth'))
             tqdm.write("Save model!")
+            if settings.save_logits and logits is not None:
+                logits.to_csv(os.path.join(folder, 'logits.csv'))
+        # Update best metric
+        if is_best_metric:
+            best_challenge_metric = metrics['challenge_metric']

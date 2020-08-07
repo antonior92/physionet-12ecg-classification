@@ -47,9 +47,10 @@ from warnings import warn
 
 
 def evaluate_12ECG_score(label_directory, output_directory):
-    # Define the weights, mapping to SNOMED-CT codes for row/columns of weights, and the SNOMED-CT code for the normal class.
+    # Define the weights, the SNOMED CT code for the normal class, and equivalent SNOMED CT codes.
     weights_file = 'dx/weights.csv'
-    normal = '426783006'
+    normal_class = '426783006'
+    equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
 
     # Find the label and output files.
     print('Finding label and output files...')
@@ -57,17 +58,24 @@ def evaluate_12ECG_score(label_directory, output_directory):
 
     # Load the labels and outputs.
     print('Loading labels and outputs...')
-    label_classes, labels = load_labels(label_files, normal)
-    output_classes, binary_outputs, scalar_outputs = load_outputs(output_files, normal)
+    label_classes, labels = load_labels(label_files, normal_class, equivalent_classes)
+    output_classes, binary_outputs, scalar_outputs = load_outputs(output_files, normal_class, equivalent_classes)
 
     # Organize/sort the labels and outputs.
     print('Organizing labels and outputs...')
     classes, labels, binary_outputs, scalar_outputs = organize_labels_outputs(label_classes, output_classes, labels, binary_outputs, scalar_outputs)
-    print(classes, type(classes))
 
     # Load the weights for the Challenge metric.
     print('Loading weights...')
     weights = load_weights(weights_file, classes)
+
+    # Only consider classes that are scored with the Challenge metric.
+    indices = np.any(weights, axis=0)  # Find indices of classes in weight matrix.
+    classes = [x for i, x in enumerate(classes) if indices[i]]
+    labels = labels[:, indices]
+    scalar_outputs = scalar_outputs[:, indices]
+    binary_outputs = binary_outputs[:, indices]
+    weights = weights[np.ix_(indices, indices)]
 
     # Evaluate the model by comparing the labels and outputs.
     print('Evaluating model...')
@@ -85,14 +93,12 @@ def evaluate_12ECG_score(label_directory, output_directory):
     f_beta_measure, g_beta_measure = compute_beta_measures(labels, binary_outputs, beta=2)
 
     print('- Challenge metric...')
-    normal_index = classes.index(normal)
-    challenge_metric = compute_challenge_metric(weights, labels, binary_outputs, normal_index)
+    challenge_metric = compute_challenge_metric(weights, labels, binary_outputs, classes, normal_class)
 
     print('Done.')
 
     # Return the results.
     return auroc, auprc, accuracy, f_measure, f_beta_measure, g_beta_measure, challenge_metric
-
 
 # Check if the input is a number.
 def is_number(x):
@@ -102,25 +108,21 @@ def is_number(x):
     except ValueError:
         return False
 
-
 # Find Challenge files.
 def find_challenge_files(label_directory, output_directory):
     label_files = list()
     output_files = list()
     for f in sorted(os.listdir(label_directory)):
-        try:
-            F = os.path.join(label_directory, f) # Full path for label file
-            if os.path.isfile(F) and F.lower().endswith('.hea') and not f.lower().startswith('.'):
-                root, ext = os.path.splitext(f)
-                g = root + '.csv'
-                G = os.path.join(output_directory, g) # Full path for corresponding output file
-                if os.path.isfile(G):
-                    label_files.append(F)
-                    output_files.append(G)
-                else:
-                    raise IOError('Output file {} not found for label file {}.'.format(g, f))
-        except IOError as e:
-            print(e)
+        F = os.path.join(label_directory, f) # Full path for label file
+        if os.path.isfile(F) and F.lower().endswith('.hea') and not f.lower().startswith('.'):
+            root, ext = os.path.splitext(f)
+            g = root + '.csv'
+            G = os.path.join(output_directory, g) # Full path for corresponding output file
+            if os.path.isfile(G):
+                label_files.append(F)
+                output_files.append(G)
+            else:
+                raise IOError('Output file {} not found for label file {}.'.format(g, f))
 
     if label_files and output_files:
         return label_files, output_files
@@ -128,8 +130,46 @@ def find_challenge_files(label_directory, output_directory):
         raise IOError('No label or output files found.')
 
 
+def prepare_classes(classes, equivalent_classes_collection, labels=None, pred=None, score=None):
+    # For each set of equivalent class, use only one class as the representative class for the set and discard
+    # the other classes in the set. The label for the representative class is positive if any of the labels
+    # in the set is positive.
+    remove_classes = list()
+    remove_indices = list()
+    for equivalent_classes in equivalent_classes_collection:
+        equivalent_classes = [x for x in equivalent_classes if x in classes]
+        if len(equivalent_classes)>1:
+            representative_class = equivalent_classes[0]
+            other_classes = equivalent_classes[1:]
+            equivalent_indices = [classes.index(x) for x in equivalent_classes]
+            representative_index = equivalent_indices[0]
+            other_indices = equivalent_indices[1:]
+
+            if labels is not None:
+                labels[:, representative_index] = np.any(labels[:, equivalent_indices], axis=1)
+            if pred is not None:
+                pred[:, representative_index] = np.any(pred[:, equivalent_indices], axis=1)
+            if score is not None:
+                score[:, representative_index] = np.nanmean(score[:, equivalent_indices], axis=1)
+            remove_classes += other_classes
+            remove_indices += other_indices
+
+    for x in remove_classes:
+        classes.remove(x)
+
+    if labels is not None:
+        labels = np.delete(labels, remove_indices, axis=1)
+    if pred is not None:
+        pred = np.delete(pred, remove_indices, axis=1)
+        pred[np.isnan(pred)] = 0
+    if score is not None:
+        score = np.delete(score, remove_indices, axis=1)
+        score[np.isnan(score)] = 0
+    return classes, labels, pred, score
+
+
 # Load labels from header/label files.
-def load_labels(label_files, normal):
+def load_labels(label_files, normal_class, equivalent_classes_collection):
     # The labels should have the following form:
     #
     # Dx: label_1, label_2, label_3
@@ -142,14 +182,14 @@ def load_labels(label_files, normal):
         with open(label_files[i], 'r') as f:
             for l in f:
                 if l.startswith('#Dx'):
-                    dxs = [arr.strip() for arr in l.split(': ')[1].split(',')]
+                    dxs = set(arr.strip() for arr in l.split(': ')[1].split(','))
                     tmp_labels.append(dxs)
 
     # Identify classes.
     classes = set.union(*map(set, tmp_labels))
-    if normal not in classes:
-        classes.add(normal)
-        print('- The normal class {} is not one of the label classes, so it has been automatically added, but please check that you chose the correct normal class.'.format(normal))
+    if normal_class not in classes:
+        classes.add(normal_class)
+        print('- The normal class {} is not one of the label classes, so it has been automatically added, but please check that you chose the correct normal class.'.format(normal_class))
     classes = sorted(classes)
     num_classes = len(classes)
 
@@ -161,21 +201,12 @@ def load_labels(label_files, normal):
             j = classes.index(dx)
             labels[i, j] = 1
 
-    # If the labels for the normal class and one or more other classes are positive, then make the label for the normal class negative.
-    # If the labels for all classes are negative, then make the label for the normal class positive.
-    normal_index = classes.index(normal)
-    for i in range(num_recordings):
-        num_positive_classes = np.sum(labels[i, :])
-        if labels[i, normal_index]==1 and num_positive_classes>1:
-            labels[i, normal_index] = 0
-        elif num_positive_classes==0:
-            labels[i, normal_index] = 1
-
+    classes, labels, _, __ = prepare_classes(classes, equivalent_classes_collection, labels=labels)
     return classes, labels
 
 
 # Load outputs from output files.
-def load_outputs(output_files, normal):
+def load_outputs(output_files, normal_class, equivalent_classes_collection):
     # The outputs should have the following form:
     #
     # diagnosis_1, diagnosis_2, diagnosis_3
@@ -209,9 +240,9 @@ def load_outputs(output_files, normal):
 
     # Identify classes.
     classes = set.union(*map(set, tmp_labels))
-    if normal not in classes:
-        classes.add(normal)
-        print('- The normal class {} is not one of the output classes, so it has been automatically added, but please check that you identified the correct normal class.'.format(normal))
+    if normal_class not in classes:
+        classes.add(normal_class)
+        print('- The normal class {} is not one of the output classes, so it has been automatically added, but please check that you identified the correct normal class.'.format(normal_class))
     classes = sorted(classes)
     num_classes = len(classes)
 
@@ -225,20 +256,8 @@ def load_outputs(output_files, normal):
             binary_outputs[i, j] = tmp_binary_outputs[i][k]
             scalar_outputs[i, j] = tmp_scalar_outputs[i][k]
 
-    # If any of the outputs is a NaN, then replace it with a zero.
-    binary_outputs[np.isnan(binary_outputs)] = 0
-    scalar_outputs[np.isnan(scalar_outputs)] = 0
-
-    # If the binary outputs for the normal class and one or more other classes are positive, then make the binary output for the normal class negative.
-    # If the binary outputs for all classes are negative, then make the binary output for the normal class positive.
-    normal_index = classes.index(normal)
-    for i in range(num_recordings):
-        num_positive_classes = np.sum(binary_outputs[i, :])
-        if binary_outputs[i, normal_index]==1 and num_positive_classes>1:
-            binary_outputs[i, normal_index] = 0
-        elif num_positive_classes==0:
-            binary_outputs[i, normal_index] = 1
-
+    classes, _, binary_outputs, scalar_outputs = prepare_classes(classes, equivalent_classes_collection,
+                                                                 pred=binary_outputs, score=scalar_outputs)
     return classes, binary_outputs, scalar_outputs
 
 
@@ -329,7 +348,6 @@ def load_weights(weight_file, classes):
                 if b in classes:
                     l = classes.index(b)
                     weights[k, l] = values[i, j]
-    np.fill_diagonal(weights, 1)
 
     return weights
 
@@ -374,7 +392,7 @@ def compute_confusion_matrices(labels, outputs, normalize=False):
     else:
         A = np.zeros((num_classes, 2, 2))
         for i in range(num_recordings):
-            normalization = float(np.sum(labels[i, :]))
+            normalization = float(max(np.sum(labels[i, :]), 1))
             for j in range(num_classes):
                 if labels[i, j]==1 and outputs[i, j]==1: # TP
                     A[j, 1, 1] += 1.0/normalization if normalization != 0 else float('nan')
@@ -523,29 +541,29 @@ def compute_modified_confusion_matrix(labels, outputs):
 
     # Iterate over all of the recordings.
     for i in range(num_recordings):
-        num_outputs = float(np.sum(outputs[i, :]))
+        # Calculate the number of positive labels and/or outputs.
+        normalization = float(max(np.sum(np.any((labels[i, :], outputs[i, :]), axis=0)), 1))
         # Iterate over all of the classes.
         for j in range(num_classes):
-            # Assign full or partial credit for each positive class.
-            if labels[i, j] and outputs[i, j]: # TP
-                A[j, j] += 1.0/num_outputs
-            elif labels[i, j] and not outputs[i, j]: # FN
+            # Assign full and/or partial credit for each positive class.
+            if labels[i, j]:
                 for k in range(num_classes):
                     if outputs[i, k]:
-                        A[j, k] += 1.0/num_outputs
+                        A[j, k] += 1.0/normalization
 
     return A
 
 
 # Compute the evaluation metric for the Challenge.
-def compute_challenge_metric(weights, labels, outputs, normal_index):
-
-    # Compute observed score.
+def compute_challenge_metric(weights, labels, outputs, classes, normal_class):
     num_recordings, num_classes = np.shape(labels)
+    normal_index = classes.index(normal_class)
+
+    # Compute the observed score.
     A = compute_modified_confusion_matrix(labels, outputs)
     observed_score = np.nansum(weights * A)
 
-    # Compute score for model that always chooses the correct label(s).
+    # Compute the score for the model that always chooses the correct label(s).
     correct_outputs = labels
     A = compute_modified_confusion_matrix(labels, correct_outputs)
     correct_score = np.nansum(weights * A)
@@ -554,7 +572,7 @@ def compute_challenge_metric(weights, labels, outputs, normal_index):
         warn("No normalization when computing challenge_metric!!")
         return observed_score
 
-    # Compute score for model that always chooses the normal label.
+    # Compute the score for the model that always chooses the normal class.
     inactive_outputs = np.zeros((num_recordings, num_classes), dtype=np.bool)
     inactive_outputs[:, normal_index] = 1
     A = compute_modified_confusion_matrix(labels, inactive_outputs)
@@ -566,7 +584,6 @@ def compute_challenge_metric(weights, labels, outputs, normal_index):
         normalized_score = float('nan')
 
     return normalized_score
-
 
 if __name__ == '__main__':
     auroc, auprc, accuracy, f_measure, f_beta_measure, g_beta_measure, challenge_metric = evaluate_12ECG_score(sys.argv[1], sys.argv[2])
