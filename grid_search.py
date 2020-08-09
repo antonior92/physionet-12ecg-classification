@@ -35,7 +35,7 @@ def execute(trial):
     pred_stage_type = trial.suggest_categorical('pred_stage_type',['lstm', 'gru', 'rnn','mean' ,'max'])
     if pred_stage_type in ('rnn','lstm','gru'):
         train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
-            '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
+            '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 35, 2)), 
             '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
             '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
             '--lr {}'.format(trial.suggest_int('lr',0.001,0.01,0.001)),
