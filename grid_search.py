@@ -32,11 +32,25 @@ def execute(trial):
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
-    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
+    pred_stage_type = trial.suggest_categorical('pred_stage_type',['lstm', 'gru', 'rnn','mean' ,'max'])
+    if pred_stage_type in ('rnn','lstm','gru'):
+        train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
+            '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
+            '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
+            '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
+            '--lr {}'.format(trial.suggest_int('lr',0.001,0.01,0.001)),
+            '--pred_stage_type {}'.format(pred_stage_type),
+            '--pred_stage_hidd {}'.format(trial.suggest_categorical('pred_stage_hidd',[30, 400, 800, 1200]))  
+            )
+    elif:
+        train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
-        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0))     
+        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
+        '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
+        '--lr {}'.format(trial.suggest_int('lr',0.001,0.01,0.001)),
+        '--pred_stage_type {}'.format(pred_stage_type))  
         )
-    
+
     #pretrain comand
     #pre_cmd = " ".join(pre_set_up)
     #subp.check_call(pre_cmd, shell=True)s
