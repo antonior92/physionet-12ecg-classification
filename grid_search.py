@@ -94,9 +94,9 @@ if __name__ == "__main__":
             os.mkdir('outputs_gridsearch')
 
     #calculates number of trials
-    number_trials=1
-    for key, value in search_space.items() :
-        number_trials *= len(value)
+    # number_trials=1
+    # for key, value in search_space.items() :
+    #     number_trials *= len(value)
 
     #sets up the study and calls the function
     study= optuna.create_study(sampler=optuna.samplers.RandomSampler(), direction='maximize') #for gridsearch: .GridSample(search_space)
