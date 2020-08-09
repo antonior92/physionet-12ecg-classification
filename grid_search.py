@@ -114,7 +114,7 @@ if __name__ == "__main__":
 
     #sets up the study and calls the function
     study= optuna.create_study(sampler=optuna.samplers.RandomSampler(), direction='maximize') #for gridsearch: .GridSample(search_space)
-    study.optimize(execute, n_trials = 2)
+    study.optimize(execute, n_trials = 25)
     #joblib.dump(study, dump_file_path)
 
     #delete the model of the last iteration if it isnt the best value
