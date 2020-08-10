@@ -98,7 +98,8 @@ class DxMap(object):
         else:
             indices, pairs_list = self._get_pairs(classes)
 
-        new_target = np.zeros(list(target.shape[:-1]) + [len(pairs_list)], dtype=target.dtype)
+        n_classes = len(classes) if classes is not None else len(indices)
+        new_target = np.zeros(list(target.shape[:-1]) + [n_classes], dtype=target.dtype)
         for i, pairs in zip(indices, pairs_list):
             # assign target from labels
             idx, subidx = pairs[0]
@@ -111,7 +112,8 @@ class DxMap(object):
         prob = np.array(prob, dtype=float)
         bs, score_len = prob.shape
         indices, pairs_list = self._get_pairs(classes)
-        new_prob = np.zeros((bs, len(pairs_list)), dtype=prob.dtype)
+        n_classes = len(classes) if classes is not None else len(indices)
+        new_prob = np.zeros((bs, n_classes), dtype=prob.dtype)
         for i, pairs in zip(indices, pairs_list):
             pair = pairs[0]
             if not self.enc.is_null(pair):
