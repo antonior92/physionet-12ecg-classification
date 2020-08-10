@@ -34,18 +34,27 @@ def read_header(header_data):
         iline = iline.split("\n")[0]
         # Get age sex and label
         if iline.startswith('#Age'):
-            tmp_age = iline.split(': ')[1].strip()
-            age = int(tmp_age if (tmp_age != 'NaN') else 57)
-            if age < 0 or age > 110:
+            try:
+                tmp_age = iline.split(': ')[1].strip()
+                age = int(tmp_age if (tmp_age != 'NaN') else 57)
+                if age < 0 or age > 110:
+                    age = 57
+            except:
                 age = 57
         elif iline.startswith('#Sex'):
-            tmp_sex = iline.split(': ')[1]
-            if tmp_sex.strip() == 'Female':
-                is_male = 0
-            else:
+            try:
+                tmp_sex = iline.split(': ')[1]
+                if tmp_sex.strip() == 'Female':
+                    is_male = 0
+                else:
+                    is_male = 1
+            except:
                 is_male = 1
         elif iline.startswith('#Dx'):
-            labels = iline.split(': ')[1].split(',')
+            try:
+                labels = iline.split(': ')[1].split(',')
+            except:
+                labels = []
 
     # Traces annotation
     tmp_hea = header_data[0].split(' ')
