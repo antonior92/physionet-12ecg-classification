@@ -58,11 +58,6 @@ def read_header(header_data):
 
     # Traces annotation
     tmp_hea = header_data[0].split(' ')
-    # id
-    try:
-        id = tmp_hea[0]
-    except:
-        id = 0
     # num leads and freq
     try:
         signal_len = int(tmp_hea[3])
@@ -114,7 +109,8 @@ class ECGDataset(abc.Sequence):
             for ff in file:
                 f = os.path.join(root, ff)
                 head, tail = os.path.split(f)
-                if os.path.isfile(f) and not tail.lower().startswith('.') and tail.lower().endswith('mat'):
+                if os.path.isfile(f) and not tail.lower().startswith('.') and \
+                        (tail.lower().endswith('mat') or tail.lower().endswith('dat')):
                     input_files.append(os.path.relpath(f, input_folder))
         return cls(input_files, input_folder, freq, only_header)
 
@@ -130,7 +126,28 @@ class ECGDataset(abc.Sequence):
         return self
 
     def get_id(self, file):
-        return os.path.split(file)[1].split('.mat')[0]
+        if '.dat' in file:
+            return os.path.split(file)[1].split('.dat')[0]
+        elif '.mat' in file:
+            return os.path.split(file)[1].split('.mat')[0]
+        else:
+            raise ValueError('File should be either a .mat or a .dat')
+
+    def get_header_filename(self, filename):
+        if '.dat' in filename:
+            return filename.replace('.dat', '.hea')
+        elif '.mat' in filename:
+            return filename.replace('.mat', '.hea')
+        else:
+            raise ValueError('File should be either a .mat or a .dat')
+
+    def get_signal_from_path(self, path):
+        if '.dat' in path:
+            return np.fromfile(path, dtype='<i2').reshape(-1, 12).T
+        elif '.mat' in path:
+            return loadmat(path)['val']
+        else:
+            raise ValueError('File should be either a .mat or a .dat')
 
     def get_ids(self, files=None):
         if files is None:
@@ -167,10 +184,10 @@ class ECGDataset(abc.Sequence):
         if only_header:
             data = None
         else:
-            x = loadmat(filename)
-            data = np.asarray(x['val'], np.float32)
+            x = self.get_signal_from_path(filename)
+            data = np.asarray(x, np.float32)
         # Get header data
-        new_file = filename.replace('.mat', '.hea')
+        new_file = self.get_header_filename(filename)
         input_header_file = os.path.join(new_file)
         with open(input_header_file, 'r') as f:
             header_data = f.readlines()
@@ -195,7 +212,6 @@ class ECGDataset(abc.Sequence):
         elif isinstance(idx, abc.Iterable):
             return self[iter(idx)]
         else:
-            print(idx, type(idx))
             raise IndexError('idx = {} ()'.format(idx, type(idx)))
 
     def __iter__(self):
@@ -208,17 +224,13 @@ class ECGDataset(abc.Sequence):
 
 
 if __name__ == '__main__':
-    dset = ECGDataset.from_folder('training_data/Training_2')
-    print(len(dset))
-    cls = dset.get_classes()
-    print(len(cls))
-    print(len(dset.get_occurrences(cls)))
+    import matplotlib.pyplot as plt
+    dset = ECGDataset.from_folder('training_data/Training_TNMG')
+    x = dset._getsample(1)['data']
+    plt.plot(x.T)
+    plt.show()
 
-    sdset = dset.get_subdataset(['Q3090', 'Q3091'])
-    print(len(sdset))
-    scls = sdset.get_classes()
-    print(scls)
-    print(sdset.get_occurrences(scls))
-    print(sdset[:])
-
-
+    dset2 = ECGDataset.from_folder('training_data/Training_2')
+    x = dset2._getsample(1)['data']
+    plt.plot(x.T)
+    plt.show()
