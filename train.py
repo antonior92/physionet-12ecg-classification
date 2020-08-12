@@ -281,7 +281,8 @@ if __name__ == '__main__':
 
     tqdm.write("Define output layer...")
     # Get all classes in the dataset
-    dset_classes = dset.get_classes()
+    if args.valid_classes == 'dset' or settings.train_classes == 'dset':
+        dset_classes = dset.get_classes()
     # Get all classes to be scored
     df = pd.read_csv(os.path.join(settings.dx, 'dx_mapping_scored.csv'))
     scored_classes = [str(c) for c in list(df['SNOMED CT Code'])]

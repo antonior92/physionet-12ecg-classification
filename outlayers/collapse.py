@@ -28,7 +28,11 @@ def collapse(x, ids, fn, unique_ids=None):
     # Collapse using fn
     new_x = np.zeros((len(unique_ids), *x.shape[1:]), dtype=x.dtype)
     for i, id in enumerate(unique_ids):
-        new_x[i, ...] = fn(x[ids == id, ...])
+        y = x[ids == id, ...]
+        if y.size > 0:
+            new_x[i, ...] = fn(y)
+        else:
+            warnings.warn("no logits values corresponding to {}".format(id))
 
     return unique_ids, new_x
 
