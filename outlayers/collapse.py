@@ -1,4 +1,5 @@
 import numpy as np
+import warnings
 
 
 def get_collapse_fun(tp):
@@ -7,7 +8,7 @@ def get_collapse_fun(tp):
         return lambda y: np.mean(y, axis=0)
     elif tp == 'max':
         return lambda y: np.max(y, axis=0)
-    elif tp in ['lstm', 'gru', 'rnn']:
+    elif tp == 'last':
         return lambda y: y[-1]
 
 

@@ -170,8 +170,11 @@ if __name__ == '__main__':
     config_parser.add_argument('--kernel_size', type=int, default=17,
                                help='kernel size in convolutional layers (default: 17).')
     # Final Predictor parameters
-    config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'mean', 'max'], default='mean',
-                               help='type of prediction stage model: lstm, gru, rnn, mean (default), max.')
+    config_parser.add_argument('--combination_strategy', choices=['last', 'mean', 'max'], default='mean',
+                               help='How to combine the values of predictions made for different stages'
+                                    'of the same EGC record. Default: mean.')
+    config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'linear'], default='linear',
+                               help='type of prediction stage model: lstm, gru, rnn, linear. Default: linear.')
     config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
                                help='number of rnn layers in prediction stage (default: 2).')
     config_parser.add_argument('--pred_stage_hidd', type=int, default=400,
@@ -365,7 +368,7 @@ if __name__ == '__main__':
     def compute_metrics(all_logits, ids):
         # Evaluate
         y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
-                                   valid_classes, args.valid_batch_size, args.pred_stage_type, device)
+                                   valid_classes, args.valid_batch_size, args.combination_strategy, device)
         # Get metrics
         y_true = dx.prepare_target(targets, valid_classes)
         # Compute metrics
