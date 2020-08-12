@@ -10,7 +10,7 @@ from data import *
 from utils import set_output_folder, check_pretrain_model, get_data_ids, \
     write_data_ids, get_model, GetMetrics, get_output_layer, \
     get_correction_factor, check_model, save_config, initialize_history, save_history, \
-    print_message, get_targets, update_history
+    print_message, get_targets, update_history, save_logits
 from outlayers import collapse, get_collapse_fun
 
 
@@ -229,7 +229,7 @@ if __name__ == '__main__':
     config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids, _ = check_pretrain_model(folder)
     pretrain_train_ids, pretrain_valid_ids = pretrain_ids
     # Check if there is a model in the given folder
-    config_dict, ckpt, dx, out_layer, correction_factor, ids, history = check_model(folder)
+    config_dict, ckpt, dx, out_layer, correction_factor, ids, history, prev_logits = check_model(folder)
     train_ids, valid_ids = ids
     # Set defaults according to the configuration file inside the folder
     if config_dict is not None:
@@ -362,9 +362,7 @@ if __name__ == '__main__':
             pass
         tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
 
-    def compute_metrics(ep=-1):
-        # compute_logits
-        all_logits, ids, sub_ids = compute_logits(ep, model, valid_loader, device)
+    def compute_metrics(all_logits, ids):
         # Evaluate
         y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
                                    valid_classes, args.valid_batch_size, args.pred_stage_type, device)
@@ -372,26 +370,29 @@ if __name__ == '__main__':
         y_true = dx.prepare_target(targets, valid_classes)
         # Compute metrics
         metrics = get_metrics(y_true, y_pred, y_score)
-        index = pd.MultiIndex.from_tuples(list(zip(ids, sub_ids)), names=['ids', 'subids'])
-        return metrics, pd.DataFrame(data=all_logits.numpy(), index=index)
+        return metrics
 
     # run over all epochs
     epochs = args.epochs
     if only_test:
-        metrics, logits = compute_metrics()
-        # Print
+        if any(map(lambda x: x is None, prev_logits)):
+            all_logits, ids, sub_ids = compute_logits(-1, model, valid_loader, device)
+        else:
+            all_logits, ids, sub_ids = prev_logits
+        metrics = compute_metrics(all_logits, ids)
         print_message(metrics)
-        # Save logits
-        if settings.save_logits and logits is not None:
-            logits.to_csv(os.path.join(folder, 'logits.csv'))
+        if settings.save_logits:
+            save_logits(all_logits, ids, sub_ids, folder)
         epochs = start_epoch  # To avoid entering the loop
     for ep in range(start_epoch, epochs):
         # train
         train_loss = train(ep, model, optimizer, train_loader, out_layer, device, not args.dont_shuffle)
         if len(valid_loader) > 0:
-            metrics, logits = compute_metrics(ep)
+            all_logits, ids, sub_ids = compute_logits(ep, model, valid_loader, device)
+            metrics = compute_metrics(all_logits, ids)
         else:
-            metrics, logits = None, None
+            all_logits, ids, sub_ids = None, None, None
+            metrics = None
         # Get learning rate
         learning_rate = 0
         for param_group in optimizer.param_groups:
@@ -407,15 +408,14 @@ if __name__ == '__main__':
         is_best_metric = best_challenge_metric < metrics['challenge_metric'] if metrics is not None else False
         # Save best model
         if (settings.save_last and (ep == args.epochs - 1)) or is_best_metric:
-            # Save model
             torch.save({'epoch': ep,
                         'model': model.state_dict(),
                         'optimizer': optimizer.state_dict(),
                         'scheduler': scheduler.state_dict()},
                        os.path.join(folder, 'model.pth'))
+            if settings.save_logits:
+                save_logits(all_logits, ids, sub_ids, folder)
             tqdm.write("Save model!")
-            if settings.save_logits and logits is not None:
-                logits.to_csv(os.path.join(folder, 'logits.csv'))
         # Update best metric
         if is_best_metric:
             best_challenge_metric = metrics['challenge_metric']

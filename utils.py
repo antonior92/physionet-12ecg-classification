@@ -281,6 +281,18 @@ def load_correction_factor(folder):
     return np.loadtxt(fname(folder, 'correction_factor.txt'))
 
 
+@try_except_msg(default=(None, None, None))
+def load_logits(folder):
+    logits_df = pd.read_csv(os.path.join(folder, 'logits.csv'))
+    ids = list(logits_df['ids'])
+    subids = list(logits_df['subids'])
+    keys = list(logits_df.keys())
+    keys.remove('ids')
+    keys.remove('subids')
+    logits = torch.tensor(logits_df[keys].values, dtype=torch.float32)
+    return logits, ids, subids
+
+
 def check_model(folder):
     tqdm.write("Looking for previous model...")
     config_dict = load_configdict(folder)
@@ -289,8 +301,9 @@ def check_model(folder):
     correction_factor = load_correction_factor(folder)
     ids = load_ids(folder)
     history = load_history(folder, ckpt)
+    logits = load_logits(folder)
     tqdm.write("Done!")
-    return config_dict, ckpt, dx, out_layer, correction_factor, ids, history
+    return config_dict, ckpt, dx, out_layer, correction_factor, ids, history, logits
 
 
 def check_pretrain_model(folder):
@@ -301,3 +314,10 @@ def check_pretrain_model(folder):
     history = load_history(folder, ckpt, prefix='pretrain')
     tqdm.write("Done!")
     return config_dict, ckpt, ids, history
+
+
+def save_logits(all_logits, ids, sub_ids, folder):
+    if (all_logits is not None) and (ids is not None) and (sub_ids is not None):
+        index = pd.MultiIndex.from_tuples(list(zip(ids, sub_ids)), names=['ids', 'subids'])
+        logits_df = pd.DataFrame(data=all_logits.numpy(), index=index)
+        logits_df.to_csv(os.path.join(folder, 'logits.csv'))
