@@ -34,11 +34,12 @@ class SplitLongSignals(object):
         return self
 
     def __next__(self):
+        if self.sub_id >= self.n_splits:
+            raise StopIteration
+        self.sub_id += 1
         subsample = {k: v for k, v in self.sample.items() if k != 'data'}
         subsample['signal_len'] = self.length
         subsample['sub_id'] = self.sub_id
-        if self.start_i + self.min_length > self.total_length:
-            raise StopIteration
         actual_length = min(self.total_length - self.start_i, self.length)
         if 'data' in self.sample.keys():
             x = np.zeros((self.sample['data'].shape[0], self.length))
@@ -49,7 +50,6 @@ class SplitLongSignals(object):
                 x[:, pad:pad + actual_length] = self.sample['data'][:, self.start_i:self.start_i + actual_length]
             subsample['data'] = x
         self.start_i += actual_length
-        self.sub_id += 1
         return subsample
 
 
