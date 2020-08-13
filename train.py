@@ -107,24 +107,27 @@ def output_from_logits(out_layer, all_logits, batch_size, device):
 
 
 def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
-             classes, batch_size, pred_stage_type, device):
-    y_score = output_from_logits(out_layer, all_logits, batch_size, device)
-    y_score = y_score.numpy()
-    # Collapse entries with the same id:
-    _, y_score = collapse(y_score, ids, fn=get_collapse_fun(pred_stage_type), unique_ids=targets_ids)
+             classes, batch_size, combination_strategy, predict_before_collapse, device):
+    y_score_torch = output_from_logits(out_layer, all_logits, batch_size, device)
+    y_score_np = y_score_torch.numpy()
     # Correct for class imbalance
-    y_score = y_score * correction_factor
+    y_score_corrected = y_score_np * correction_factor
+    # Collapse entries with the same id:
+    _, y_score_collapsed = collapse(y_score_corrected, ids, fn=get_collapse_fun(combination_strategy),
+                                    unique_ids=targets_ids)
     # Get zero one prediction
-    y_pred_aux = out_layer.get_prediction(y_score)
-    y_pred = dx.prepare_target(y_pred_aux, classes)
-    y_score = dx.prepare_probabilities(y_score, classes)
+    if predict_before_collapse:
+        y_pred_not_collapsed = out_layer.get_prediction(y_score_corrected)
+        _, y_pred_collapsed = collapse(y_pred_not_collapsed, ids, fn=get_collapse_fun('max'),
+                                      unique_ids=targets_ids)
+    else:
+        y_pred_collapsed = out_layer.get_prediction(y_score_collapsed)
+    y_pred = dx.prepare_target(y_pred_collapsed, classes)
+    y_score = dx.prepare_probabilities(y_score_collapsed, classes)
     return y_pred, y_score
 
 
-# TODO:  1) Add something to deal with the classes the same way they do in evaluate_12ECG_score.py
-#  (i.e. deal with repeated classes)
-#  2) Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
-#  3) Merge check_model and check_pretrain_model into one single function?
+# TODO: Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -173,6 +176,10 @@ if __name__ == '__main__':
     config_parser.add_argument('--combination_strategy', choices=['last', 'mean', 'max'], default='mean',
                                help='How to combine the values of predictions made for different stages'
                                     'of the same EGC record. Default: mean.')
+    config_parser.add_argument('--predict_before_collapse', action='store_true',
+                               help='Compute the 0-1 predictions for each smaller section and collapse them'
+                                    'afterwards. If not set, first collapse probabilities and, in a second moment,'
+                                    'compute the predictions from the probabilities.')
     config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'linear'], default='linear',
                                help='type of prediction stage model: lstm, gru, rnn, linear. Default: linear.')
     config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
@@ -307,7 +314,7 @@ if __name__ == '__main__':
 
     if len(valid_dset) > 0:
         tqdm.write("Get targets for validation...")
-        targets = get_targets(valid_dset, dx)
+        targets = get_targets(valid_dset, valid_classes)
         tqdm.write("Done!")
 
     tqdm.write("Define  correction factor (for class imbalance) ...")
@@ -322,7 +329,8 @@ if __name__ == '__main__':
     tqdm.write("Define metrics...")
     normal_class = '426783006'
     equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
-    get_metrics = GetMetrics(os.path.join(settings.dx, 'weights.csv'), valid_classes, normal_class, equivalent_classes)
+    get_metrics = GetMetrics(os.path.join(settings.dx, 'weights.csv'), targets,
+                             valid_classes, normal_class, equivalent_classes)
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
@@ -369,11 +377,10 @@ if __name__ == '__main__':
     def compute_metrics(all_logits, ids):
         # Evaluate
         y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
-                                   valid_classes, args.valid_batch_size, args.combination_strategy, device)
-        # Get metrics
-        y_true = dx.prepare_target(targets, valid_classes)
+                                   valid_classes, args.valid_batch_size, args.combination_strategy,
+                                   args.predict_before_collapse, device)
         # Compute metrics
-        metrics = get_metrics(y_true, y_pred, y_score)
+        metrics = get_metrics(y_pred, y_score)
         return metrics
 
     # run over all epochs

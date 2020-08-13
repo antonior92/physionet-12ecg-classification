@@ -19,15 +19,17 @@ from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_ac
 
 class GetMetrics(object):
 
-    def __init__(self, path, classes, normal_class=None, equivalent_classes=None):
+    def __init__(self, path, targets, classes, normal_class=None, equivalent_classes=None):
         """Compute metrics"""
         self.path = path
         self.normal_class = normal_class
         self.equivalent_classes = equivalent_classes
         self.classes = classes
+        self.targets = targets
 
-    def __call__(self, y_true, y_pred, y_score):
+    def __call__(self, y_pred, y_score):
         """Return dictionary with relevant metrics"""
+        y_true = self.targets
         classes = copy(self.classes)
         y_true, y_pred, y_score = y_true.copy(), y_pred.copy(), y_score.copy()
         classes, y_true, y_pred, y_score = prepare_classes(classes, self.equivalent_classes,
@@ -139,9 +141,9 @@ def get_output_layer(path):
     return out_layer, dx
 
 
-def get_targets(dset, dx):
+def get_targets(dset, classes):
     dset.use_only_header(True)
-    targets = np.vstack([dx.target_from_labels(sample['labels']) for sample in dset])
+    targets = np.vstack([np.isin(classes, sample['labels']) for sample in dset])
     dset.use_only_header(False)
     return targets
 
