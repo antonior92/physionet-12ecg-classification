@@ -36,7 +36,7 @@ def execute(trial):
     if pred_stage_type in ('rnn','lstm','gru'):
         train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
             '--kernel_size {}'.format(trial.suggest_categorical('kernel_size', [9,15,17,35])), 
-            '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
+            '--dropout_rate {}'.format(trial.suggest_loguniform('dropout_rate', 0.001, 1.0)),
             '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
             '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
             '--pred_stage_type {}'.format(pred_stage_type),
@@ -45,10 +45,10 @@ def execute(trial):
     else:
         train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
-        '--dropout_rate {}'.format(trial.suggest_float('dropout_rate', 0.001, 1.0)),
+        '--dropout_rate {}'.format(trial.suggest_loguniform('dropout_rate', 0.001, 1.0)),
         '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
-        '--lr {}'.format(trial.suggest_int('lr',0.001,0.01,0.001)),
-        '--pred_stage_type {}'.format(pred_stage_type)  
+        '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
+        '--pred_stage_type {}'.format(pred_stage_type)
         )
 
     #pretrain comand
