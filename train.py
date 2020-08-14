@@ -269,12 +269,13 @@ if __name__ == '__main__':
 
     tqdm.write("Define train and validation splits...")
     train_ids, valid_ids = get_data_ids(dset, settings.valid_split, settings.n_total, rng,
-                                        set(valid_ids).union(pretrain_valid_ids))
+                                        set(train_ids).union(pretrain_train_ids))
     # Sort
     train_ids.sort()
     valid_ids.sort()
     # Save train, validation ids
-    write_data_ids(folder, train_ids, valid_ids)
+    if not only_test:
+        write_data_ids(folder, train_ids, valid_ids)
     # Get dataset
     train_dset = dset.get_subdataset(train_ids)
     valid_dset = dset.get_subdataset(valid_ids)
@@ -375,7 +376,7 @@ if __name__ == '__main__':
             best_challenge_metric = max(history[history['epoch'] == ckpt['epoch']]['challenge_metric'])
         except:
             pass
-        tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
+        tqdm.write("\t Last epoch = {:}...".format(start_epoch))
 
     # run over all epochs
     epochs = args.epochs

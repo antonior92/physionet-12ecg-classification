@@ -116,13 +116,13 @@ def set_output_folder(folder):
     return folder
 
 
-def get_data_ids(dset, valid_split, n_total, rng, previous_valid_ids):
+def get_data_ids(dset, valid_split, n_total, rng, previous_train_ids):
     # Get all ids
     all_ids = dset.get_ids()
     set_all_ids = set(all_ids)
-    previous_valid_ids_in_dset = list(set_all_ids.intersection(previous_valid_ids))
-    other_ids_in_dset = list(set_all_ids.difference(previous_valid_ids))
-    n_previous_ids = len(previous_valid_ids_in_dset)
+    previous_train_ids_in_dset = list(set_all_ids.intersection(previous_train_ids))
+    other_ids_in_dset = list(set_all_ids.difference(previous_train_ids))
+    n_previous_ids = len(previous_train_ids_in_dset)
     # Get length
     n_total = len(dset) if n_total <= 0 else min(n_total, len(dset))
     n_valid = int(n_total * valid_split)
@@ -131,11 +131,11 @@ def get_data_ids(dset, valid_split, n_total, rng, previous_valid_ids):
     # Define train and valid ids
     other_ids_in_dset.sort()  # to be deterministic
     rng.shuffle(other_ids_in_dset)
-    train_ids = other_ids_in_dset[:n_train]
-    valid_ids = other_ids_in_dset[n_train:] + previous_valid_ids_in_dset
-    if n_previous_ids > n_valid:
+    valid_ids = other_ids_in_dset[:n_valid]
+    train_ids = other_ids_in_dset[n_valid:] + previous_train_ids_in_dset
+    if n_previous_ids > n_train:
         tqdm.write("\t Valid ids were reduced to respect n_total!")
-        valid_ids = valid_ids[:n_valid]
+        train_ids = train_ids[:n_train]
 
     return train_ids, valid_ids
 
