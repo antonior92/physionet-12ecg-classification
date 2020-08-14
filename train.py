@@ -268,14 +268,8 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define train and validation splits...")
-    # if pretrained ids are available (not empty)
-    if train_ids and valid_ids:
-        pass
-    elif pretrain_train_ids and pretrain_valid_ids:
-        train_ids = pretrain_train_ids
-        valid_ids = pretrain_valid_ids
-    else:
-        train_ids, valid_ids = get_data_ids(dset, settings.valid_split, settings.n_total, rng)
+    train_ids, valid_ids = get_data_ids(dset, settings.valid_split, settings.n_total, rng,
+                                        set(valid_ids).union(pretrain_valid_ids))
     # Sort
     train_ids.sort()
     valid_ids.sort()
