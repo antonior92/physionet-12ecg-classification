@@ -131,7 +131,7 @@ class ECGDataset(abc.Sequence):
         elif '.mat' in file:
             return os.path.split(file)[1].split('.mat')[0]
         else:
-            raise ValueError('File should be either a .mat or a .dat')
+            raise ValueError('File should be either a .mat or a .dat. Filename={:}'.format(file))
 
     def get_header_filename(self, filename):
         if '.dat' in filename:
@@ -139,7 +139,7 @@ class ECGDataset(abc.Sequence):
         elif '.mat' in filename:
             return filename.replace('.mat', '.hea')
         else:
-            raise ValueError('File should be either a .mat or a .dat')
+            raise ValueError('File should be either a .mat or a .dat. Filename={:}'.format(filename))
 
     def get_signal_from_path(self, path):
         if '.dat' in path:
@@ -147,7 +147,7 @@ class ECGDataset(abc.Sequence):
         elif '.mat' in path:
             return loadmat(path)['val']
         else:
-            raise ValueError('File should be either a .mat or a .dat')
+            raise ValueError('File should be either a .mat or a .dat. Filename={:}'.format(path))
 
     def get_ids(self, files=None):
         if files is None:

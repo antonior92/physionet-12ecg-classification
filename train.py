@@ -312,11 +312,6 @@ if __name__ == '__main__':
     tqdm.write('\t{:}'.format(out_layer))
     tqdm.write("Done!")
 
-    if len(valid_dset) > 0:
-        tqdm.write("Get targets for validation...")
-        targets = get_targets(valid_dset, valid_classes)
-        tqdm.write("Done!")
-
     tqdm.write("Define  correction factor (for class imbalance) ...")
     if correction_factor is None:
         correction_factor = get_correction_factor(dset, dx, settings.expected_class_distribution)
@@ -324,13 +319,6 @@ if __name__ == '__main__':
     else:
         tqdm.write("\tUsing pre-specified correction factor!")
     tqdm.write("\tCorrection factor = {:}".format(str(list(correction_factor))))
-    tqdm.write("Done!")
-
-    tqdm.write("Define metrics...")
-    normal_class = '426783006'
-    equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
-    get_metrics = GetMetrics(os.path.join(settings.dx, 'weights.csv'), targets,
-                             valid_classes, normal_class, equivalent_classes)
     tqdm.write("Done!")
 
     tqdm.write("Get dataloaders...")
@@ -362,6 +350,27 @@ if __name__ == '__main__':
         scheduler.load_state_dict(ckpt["scheduler"])
     tqdm.write("Done!")
 
+    if len(valid_dset) > 0:
+        tqdm.write("Get targets for validation...")
+        targets = get_targets(valid_dset, valid_classes)
+        tqdm.write("Done!")
+
+        tqdm.write("Define metrics...")
+        normal_class = '426783006'
+        equivalent_classes = [['713427006', '59118001'], ['284470004', '63593006'], ['427172004', '17338001']]
+        get_metrics = GetMetrics(os.path.join(settings.dx, 'weights.csv'), targets,
+                                 valid_classes, normal_class, equivalent_classes)
+        tqdm.write("Done!")
+
+        def compute_metrics(all_logits, ids):
+            # Evaluate
+            y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
+                                       valid_classes, args.valid_batch_size, args.combination_strategy,
+                                       args.predict_before_collapse, device)
+            # Compute metrics
+            metrics = get_metrics(y_pred, y_score)
+            return metrics
+
     tqdm.write("Start training...")
     start_epoch = 0 if ckpt is None else ckpt['epoch']+1
     best_challenge_metric = -np.Inf
@@ -373,15 +382,6 @@ if __name__ == '__main__':
         except:
             pass
         tqdm.write("\tContinuing from epoch {:}...".format(start_epoch))
-
-    def compute_metrics(all_logits, ids):
-        # Evaluate
-        y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
-                                   valid_classes, args.valid_batch_size, args.combination_strategy,
-                                   args.predict_before_collapse, device)
-        # Compute metrics
-        metrics = get_metrics(y_pred, y_score)
-        return metrics
 
     # run over all epochs
     epochs = args.epochs
