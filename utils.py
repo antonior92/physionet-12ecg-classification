@@ -149,7 +149,9 @@ def get_targets(dset, classes):
 
 
 def get_correction_factor(dset, dx, expected_class_distribution):
-    targets = get_targets(dset, dx)
+    dset.use_only_header(True)
+    targets = np.vstack([dx.target_from_labels(sample['labels']) for sample in dset])
+    dset.use_only_header(False)
     occurences = dx.prepare_target(targets)
     n_occurences = occurences.sum(axis=0)
     fraction = n_occurences / occurences.shape[0]
