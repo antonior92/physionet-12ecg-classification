@@ -137,7 +137,7 @@ def get_output_layer(path):
     with open(path, 'r') as f:
         descriptor = f.read()
     out_layer = outlayer_from_str(descriptor.split('\n')[0])
-    dx = DxMap.from_str('\n'.join(descriptor.split('\n')[1:]).strip())
+    dx = DxMap.from_str('\n'.join([d.split('#', 1)[0].strip() for d in descriptor.split('\n')[1:]]))
     return out_layer, dx
 
 
