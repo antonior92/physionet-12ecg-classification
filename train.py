@@ -127,7 +127,12 @@ def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
     return y_pred, y_score
 
 
-# TODO: Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
+# TODO: 1. Add option to change prediction stage after loading checkpoint
+#  2. Add option to not loading optimizer, scheduler, last epoch and history and saving everything on subfolder.
+#  3. Add option to freeze everything except last layer. i.e 'for param in ....parameter():param.requires_grad = False'
+#  4. Change last layer scheme, to allow overewritting it through the command line
+#  5. Clean get model interface (Low priority)
+#  Low priority: Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)

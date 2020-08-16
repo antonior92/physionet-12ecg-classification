@@ -53,6 +53,16 @@ class GetMetrics(object):
                 'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
 
 
+def get_pred_stage(config, n_classes):
+    if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
+        pred_stage = RNNPredictionStage(config, n_classes)
+    else:
+        n_filters_last = config['net_filter_size'][-1]
+        n_samples_last = config['net_seq_length'][-1]
+        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last * n_samples_last, n_classes=n_classes)
+    return pred_stage
+
+
 def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
     N_LEADS = 12
     n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
@@ -72,12 +82,7 @@ def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt
                        blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
                        kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
     # Get final prediction stage
-    if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
-        pred_stage = RNNPredictionStage(config, n_classes)
-    else:
-        n_filters_last = config['net_filter_size'][-1]
-        n_samples_last = config['net_seq_length'][-1]
-        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last * n_samples_last, n_classes=n_classes)
+    pred_stage = get_pred_stage(config, n_classes)
     # get pretrain model if available and combine all models
     if pretrain_stage_config is None:
         # combine the models
