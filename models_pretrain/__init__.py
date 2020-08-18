@@ -1,6 +1,9 @@
 from .rnn_pretrain import MyRNN
-from .transformer_pretrain import MyTransformer
-from .transformerxl_pretrain import MyTransformerXL
+try:
+    from .transformer_pretrain import MyTransformer
+    from .transformerxl_pretrain import MyTransformerXL
+except:
+    pass
 
 
 # load pretrained model
