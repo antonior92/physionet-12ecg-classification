@@ -222,8 +222,8 @@ def get_full_model(ptrmdl, core_model, pred_stage, pretrain_output_size, freeze_
         ptrmdl = ptrmdl.get_pretrained(pretrain_output_size, freeze_ptrmdl)
         list_module_name = [('ptrmdl', ptrmdl)]
     if freeze_core_model:
-        for param in self.core_model.parameters():
-            param.require_grad = True
+        for param in core_model.parameters():
+            param.require_grad = False
     list_module_name += [('core_model', core_model)]
     list_module_name += [('pred_stage', pred_stage)]
 

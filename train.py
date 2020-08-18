@@ -227,7 +227,8 @@ if __name__ == '__main__':
                                  'One additional argument might be passed to specify the subfolder.'
                                  'Otherwise it just use the same default name and rules as in `folder` '
                                  'creation.')
-
+    sys_parser.add_argument('--reset_final_predictor', action='store_true',
+                            help='Reset prediction stage, the output layer and the correction factor.')
     settings, rem_args = sys_parser.parse_known_args()
 
     # Set device
@@ -247,6 +248,13 @@ if __name__ == '__main__':
         folder = os.path.join(folder, settings.restart_training).strip()
         folder = set_output_folder(folder)
         tqdm.write('Restart training configurations on folder={}'.format(folder))
+    if settings.reset_final_predictor:
+        dx = None
+        out_layer = None
+        ptrmdl, core_model, pred_stage = mdl
+        mdl = ptrmdl, core_model, None
+        correction_factor = None
+        tqdm.write('Restart final layers.')
 
     # Set defaults according to the configuration file inside the folder
     if config_dict is not None:
