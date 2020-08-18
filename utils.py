@@ -2,17 +2,16 @@ import os
 import datetime
 import json
 from tqdm import tqdm
-from warnings import warn
+from collections import OrderedDict
 import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
 from copy import copy
 
-from models.resnet import ResNet1d
+from models import get_model, get_prediction_stage
+from models_pretrain import get_pretrain
 from outlayers import DxMap, outlayer_from_str
-from models.mlp import MlpClassifier
-from models.prediction_model import RNNPredictionStage, LinearPredictionStage
 from evaluate_12ECG_score import (compute_beta_measures, compute_auc, compute_accuracy, compute_f_measure,
                                   compute_challenge_metric, prepare_classes, load_weights)
 
@@ -53,62 +52,6 @@ class GetMetrics(object):
                 'geom_mean': geometric_mean, 'auroc': auroc, 'auprc': auprc, 'challenge_metric': challenge_metric}
 
 
-def get_pred_stage(config, n_classes):
-    if config['pred_stage_type'].lower() in ['gru', 'lstm', 'rnn']:
-        pred_stage = RNNPredictionStage(config, n_classes)
-    else:
-        n_filters_last = config['net_filter_size'][-1]
-        n_samples_last = config['net_seq_length'][-1]
-        pred_stage = LinearPredictionStage(model_output_dim=n_filters_last * n_samples_last, n_classes=n_classes)
-    return pred_stage
-
-
-def get_model(config, n_classes, pretrain_stage_config=None, pretrain_stage_ckpt=None):
-    N_LEADS = 12
-    n_input_channels = N_LEADS if pretrain_stage_config is None else config['pretrain_output_size']
-    # Remove blocks from the convolutional neural network if they are not in accordance with seq_len
-    removed_blocks = 0
-    for l in config['net_seq_length']:
-        if l > config['seq_length']:
-            del config['net_seq_length'][0]
-            del config['net_filter_size'][0]
-            removed_blocks += 1
-    if removed_blocks > 0:
-        warn("The output of the pretrain stage is not consistent with the conv net "
-             "structure. We removed the first n={:d} residual blocks.".format(removed_blocks)
-             + "the new configuration is " + str(list(zip(config['net_filter_size'], config['net_seq_length']))))
-    # Get main model
-    res_net = ResNet1d(input_dim=(n_input_channels, config['seq_length']),
-                       blocks_dim=list(zip(config['net_filter_size'], config['net_seq_length'])),
-                       kernel_size=config['kernel_size'], dropout_rate=config['dropout_rate'])
-    # Get final prediction stage
-    pred_stage = get_pred_stage(config, n_classes)
-    # get pretrain model if available and combine all models
-    if pretrain_stage_config is None:
-        # combine the models
-        model = nn.Sequential(res_net, pred_stage)
-    else:
-        # Import pretrain only if needed
-        from pretrain import MyRNN, MyTransformer, MyTransformerXL
-        # load pretrained model
-        if pretrain_stage_config['pretrain_model'].lower() in {'rnn', 'lstm', 'gru'}:
-            pretrained = MyRNN(pretrain_stage_config)
-        elif pretrain_stage_config['pretrain_model'].lower() == 'transformer':
-            pretrained = MyTransformer(pretrain_stage_config)
-        elif pretrain_stage_config['pretrain_model'].lower() == 'transformerxl':
-            pretrained = MyTransformerXL(pretrain_stage_config)
-        if pretrain_stage_ckpt is not None:
-            pretrained.load_state_dict(pretrain_stage_ckpt['model'])
-        ptrmdl = pretrained.get_pretrained(config['pretrain_output_size'], config['finetuning'])
-        # combine the models
-        if config['eval_transformer']:
-            small_clf = MlpClassifier(config, n_classes, pretrain_stage_config)
-            model = nn.Sequential(ptrmdl, small_clf)
-        else:
-            model = nn.Sequential(ptrmdl, res_net, pred_stage)
-    return model
-
-
 def set_output_folder(folder):
     if folder[-1] == '/':
         folder = os.path.join(folder, 'output_' +
@@ -138,10 +81,7 @@ def get_data_ids(dset, valid_split, n_total, rng, previous_train_ids):
     rng.shuffle(other_ids_in_dset)
     valid_ids = other_ids_in_dset[:n_valid]
     train_ids = other_ids_in_dset[n_valid:] + previous_train_ids_in_dset
-    if n_previous_ids > n_train:
-        tqdm.write("\t Valid ids were reduced to respect n_total!")
-        train_ids = train_ids[:n_train]
-
+    train_ids = train_ids[:n_train]
     return train_ids, valid_ids
 
 
@@ -238,6 +178,20 @@ def save_history(folder, history):
     history.to_csv(os.path.join(folder, 'history.csv'), index=False)
 
 
+def save_ckpt(folder, ep, model, optimizer, scheduler, save_ptrmdl, save_core_model):
+    ptrmdl, core_model, pred_stage = split_full_model(model)
+    dict_base = {'epoch': ep,
+                 'optimizer': optimizer.state_dict(),
+                 'scheduler': scheduler.state_dict()}
+    if save_ptrmdl and ptrmdl is not None:
+        dict_base['pretrain_model'] = ptrmdl.state_dict()
+    if save_core_model and core_model is not None:
+        dict_base['model'] = core_model.state_dict()
+    if pred_stage is not None:
+        dict_base['pred_stage'] = pred_stage.state_dict()
+    torch.save(dict_base, os.path.join(folder, 'model.pth'))
+
+
 def print_message(metrics=None, ep=-1, learning_rate=None, train_loss=None):
     # Print message
     message = ''
@@ -255,8 +209,35 @@ def print_message(metrics=None, ep=-1, learning_rate=None, train_loss=None):
     tqdm.write(message)
 
 
+def get_input_size(ptrmdl):
+    N_LEADS = 12
+    return N_LEADS if ptrmdl is None else args.pretrain_output_size
+
+
+# TODO: finish testing get_full_model
+def get_full_model(ptrmdl, core_model, pred_stage, pretrain_output_size, freeze_ptrmdl=False, freeze_core_model=False):
+    # Get pretrained model if available
+    list_module_name = []
+    if ptrmdl is not None:
+        ptrmdl = ptrmdl.get_pretrained(pretrain_output_size, freeze_ptrmdl)
+        list_module_name = [('ptrmdl', ptrmdl)]
+    if freeze_core_model:
+        for param in self.core_model.parameters():
+            param.require_grad = True
+    list_module_name += [('core_model', core_model)]
+    list_module_name += [('pred_stage', pred_stage)]
+
+    return nn.Sequential(OrderedDict(list_module_name))
+
+
+def split_full_model(model):
+    if 'ptrmdl' in model._modules.keys():
+        return model.ptrmdl, model.core_model, model.pred_stage
+    else:
+        return None, model.core_model, model.pred_stage
+
 @try_except_msg()
-def load_model(folder, prefix=''):
+def load_ckpt(folder, prefix=''):
     return torch.load(fname(folder, 'model.pth', prefix), map_location=lambda storage, loc: storage)
 
 
@@ -266,20 +247,50 @@ def load_history(folder, ckpt, prefix=''):
     return history[history['epoch'] < ckpt['epoch'] + 1]  # Remove epochs after the ones from the saved model
 
 
-@try_except_msg(default=([], []))
-def load_ids(folder, prefix=''):
+@try_except_msg()
+def load_pretrain_model(config, ckpt):
+    # Load pretrained
+    pretrained = get_pretrain(config)
+    # Import pretrain only if needed
+    if ckpt is not None:
+        pretrained.load_state_dict(ckpt['model'])
+    return pretrained
+
+
+def update_pretrain_models(ptrmdl, ckpt):
+    # import model if possible
+    if (ckpt is not None) and ('pretrain_model' in ckpt.keys()) and (ptrmdl is not None):
+        ptrmdl.load_state_dict(ckpt['pretrain_model'])
+    return ptrmdl
+
+
+@try_except_msg()
+def load_model(ptrmdl, config, ckpt):
+    # Get model
+    model = get_model(config['mdl_type'], get_input_size(ptrmdl), config['seq_length'], **config)
+    # import model if possible
+    model.load_state_dict(ckpt['model'])
+    return model
+
+
+@try_except_msg()
+def load_pred_stage(config, ckpt, dx):
+    # Get prediction stage
+    pred_stage = get_prediction_stage(config['pred_stage_type'], len(dx), config['net_seq_length'][-1],
+                                      config['net_filter_size'][-1], **config)
+    # import model if possible
+    pred_stage.load_state_dict(ckpt['pred_stage'])
+    return pred_stage
+
+
+@try_except_msg(default=[])
+def load_train_ids(folder, prefix=''):
     with open(fname(folder, 'train_ids.txt', prefix), 'r') as f:
         str = f.read()
         if len(str) == 0:
             raise ValueError
         train_ids = str.strip().split(',')
-
-    with open(fname(folder, 'valid_ids.txt', prefix), 'r') as f:
-        str = f.read()
-        if len(str) == 0:
-            raise ValueError
-        valid_ids = str.strip().split(',')
-    return train_ids, valid_ids
+    return train_ids
 
 
 @try_except_msg()
@@ -311,27 +322,35 @@ def load_logits(folder):
     return logits, ids, subids
 
 
-def check_model(folder):
+def check_folder(folder):
+    config_dict_pretrain_stage, ckpt_pretrain_stage, ptrmdl, pretrain_ids, _ = check_pretrain_folder(folder)
     tqdm.write("Looking for previous model...")
+    # Load config
     config_dict = load_configdict(folder)
-    ckpt = load_model(folder)
+    ckpt = load_ckpt(folder)
     out_layer, dx = load_outlayer(folder)
+    ptrmdl = update_pretrain_models(ptrmdl, ckpt)
+    core_model = load_model(ptrmdl, config_dict, ckpt)
+    pred_stage = load_pred_stage(config_dict, ckpt, dx)
     correction_factor = load_correction_factor(folder)
-    ids = load_ids(folder)
+    train_ids = load_train_ids(folder)
     history = load_history(folder, ckpt)
     logits = load_logits(folder)
     tqdm.write("Done!")
-    return config_dict, ckpt, dx, out_layer, correction_factor, ids, history, logits
+    mdl = (ptrmdl, core_model, pred_stage)
+    return config_dict, ckpt, dx,  out_layer, mdl, correction_factor, set(train_ids).union(pretrain_ids), \
+           history, logits
 
 
-def check_pretrain_model(folder):
+def check_pretrain_folder(folder):
     tqdm.write("Looking for self-supervised pretrained stage...")
     config_dict = load_configdict(folder, prefix='pretrain')
-    ckpt = load_model(folder, prefix='pretrain')
-    ids = load_ids(folder, prefix='pretrain')
+    ckpt = load_ckpt(folder, prefix='pretrain')
+    model = load_pretrain_model(config_dict, ckpt)
+    train_ids = load_train_ids(folder, prefix='pretrain')
     history = load_history(folder, ckpt, prefix='pretrain')
     tqdm.write("Done!")
-    return config_dict, ckpt, ids, history
+    return config_dict, ckpt, model, train_ids, history
 
 
 def save_logits(all_logits, ids, sub_ids, folder):

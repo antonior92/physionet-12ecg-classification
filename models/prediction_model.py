@@ -14,27 +14,26 @@ class LinearPredictionStage(nn.Module):
 
         # Fully connected layer
         x = self.lin(x)
-
         return x
 
 
 class RNNPredictionStage(nn.Module):
-    def __init__(self, args, n_classes):  # n_diagnoses, hidden_size=20, num_layers=1):
+    def __init__(self, n_classes, n_filters_last, n_samples_last, type, hidden_size, num_layers):
         super(RNNPredictionStage, self).__init__()
         # from ConvNet output in ResNet
-        self.n_filters_last = args['net_filter_size'][-1]
-        self.n_samples_last = args['net_seq_length'][-1]
+        self.n_filters_last = n_filters_last
+        self.n_samples_last = n_samples_last
 
         # self.d_model_out = self.n_filters_last * self.n_samples_last
         self.n_classes = n_classes
-        self.hidden_size = args['pred_stage_hidd']
-        self.num_layers = args['pred_stage_n_layer']
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
 
         self.rnn_input = None
         self.sub_ids = None
 
-        self.rnn_type = args['pred_stage_type'].lower()
-        self.rnn = getattr(nn, args['pred_stage_type'].upper())(self.n_filters_last, self.hidden_size, self.num_layers)
+        self.rnn_type = type
+        self.rnn = getattr(nn, type.upper())(self.n_filters_last, self.hidden_size, self.num_layers)
         self.skip_connection = nn.Linear(self.n_filters_last, self.hidden_size)
         self.linear = nn.Linear(self.hidden_size * self.n_samples_last, self.n_classes)
 

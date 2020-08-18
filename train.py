@@ -7,10 +7,7 @@ from tqdm import tqdm
 from outlayers import DxMap, outlayer_from_str
 
 from data import *
-from utils import set_output_folder, check_pretrain_model, get_data_ids, \
-    write_data_ids, get_model, GetMetrics, get_output_layer, \
-    get_correction_factor, check_model, save_config, initialize_history, save_history, \
-    print_message, get_targets, update_history, save_logits
+from utils import *
 from outlayers import collapse, get_collapse_fun
 
 
@@ -127,12 +124,7 @@ def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
     return y_pred, y_score
 
 
-# TODO: 1. Add option to change prediction stage after loading checkpoint
-#  2. Add option to not loading optimizer, scheduler, last epoch and history and saving everything on subfolder.
-#  3. Add option to freeze everything except last layer. i.e 'for param in ....parameter():param.requires_grad = False'
-#  4. Change last layer scheme, to allow overewritting it through the command line
-#  5. Clean get model interface (Low priority)
-#  Low priority: Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
+# TODO: Add validation loss to metrics. Now validation loss is not computed at all due to a recent refactoring
 if __name__ == '__main__':
     # Experiment parameters
     config_parser = argparse.ArgumentParser(add_help=False)
@@ -161,14 +153,12 @@ if __name__ == '__main__':
     config_parser.add_argument('--pretrain_output_size', type=int, default=64,
                                help='The output of the pretrained model goes through a linear layer, which outputs'
                                     'a tensor with the given number of features (default: 64).')
-    config_parser.add_argument('--finetuning', type=bool, default=False,
-                               help='when there is a pre-trained model, by default it '
-                                    'freezes the weights of the pre-trained model, but with this option'
-                                    'these weight will be fine-tuned during training. Default is False')
-    config_parser.add_argument('--eval_transformer', type=bool, default=False,
+    config_parser.add_argument('--pretrain_freeze', action='store_true',
+                               help='Freeze parameters from pretrained model.')
+    # Model parameters
+    config_parser.add_argument('--mdl_type', choices=['resnet', 'mlp'], default='resnet',
                                help='Evaluates the transformer. If true a small MLP classifier is chosen instead of '
                                     'the ResNet + prediction stage (default: False).')
-    # Model parameters
     config_parser.add_argument('--net_filter_size', type=int, nargs='+', default=[64, 128, 196, 256, 320],
                                help='filter size in resnet layers (default: [64, 128, 196, 256, 320]).')
     config_parser.add_argument('--net_seq_length', type=int, nargs='+', default=[4096, 1024, 256, 64, 16],
@@ -177,6 +167,8 @@ if __name__ == '__main__':
                                help='dropout rate (default: 0.5).')
     config_parser.add_argument('--kernel_size', type=int, default=17,
                                help='kernel size in convolutional layers (default: 17).')
+    config_parser.add_argument('--mdl_freeze', action='store_true',
+                               help='Freeze parameters from model and only train last layer.')
     # Final Predictor parameters
     config_parser.add_argument('--combination_strategy', choices=['last', 'mean', 'max'], default='mean',
                                help='How to combine the values of predictions made for different stages'
@@ -230,6 +222,11 @@ if __name__ == '__main__':
                                  'it creates a folder `output_YYYY-MM-DD_HH_MM_SS_MMMMMM` inside it'
                                  'and save the content inside it. If it does not ends with `/`, the content is saved'
                                  'in the folder provided.')
+    sys_parser.add_argument('--restart_training', nargs='?', default='', const=' ',
+                            help='Restart training configurations but with pre-loaded model.'
+                                 'One additional argument might be passed to specify the subfolder.'
+                                 'Otherwise it just use the same default name and rules as in `folder` '
+                                 'creation.')
 
     settings, rem_args = sys_parser.parse_known_args()
 
@@ -240,12 +237,17 @@ if __name__ == '__main__':
         tqdm.write("Using gpu!")
     # Generate output folder if needed and save config file
     folder = set_output_folder(settings.folder)
-    # Check if there is pretrained model in the given folder
-    config_dict_pretrain_stage, ckpt_pretrain_stage, pretrain_ids, _ = check_pretrain_model(folder)
-    pretrain_train_ids, pretrain_valid_ids = pretrain_ids
     # Check if there is a model in the given folder
-    config_dict, ckpt, dx, out_layer, correction_factor, ids, history, prev_logits = check_model(folder)
-    train_ids, valid_ids = ids
+    config_dict, ckpt, dx, out_layer, mdl, correction_factor, train_ids, history, prev_logits = check_folder(folder)
+    # Restart training
+    if settings.restart_training:
+        ckpt = None
+        history = None
+        prev_logits = None
+        folder = os.path.join(folder, settings.restart_training).strip()
+        folder = set_output_folder(folder)
+        tqdm.write('Restart training configurations on folder={}'.format(folder))
+
     # Set defaults according to the configuration file inside the folder
     if config_dict is not None:
         config_parser.set_defaults(**config_dict)
@@ -274,7 +276,7 @@ if __name__ == '__main__':
 
     tqdm.write("Define train and validation splits...")
     train_ids, valid_ids = get_data_ids(dset, settings.valid_split, settings.n_total, rng,
-                                        set(train_ids).union(pretrain_train_ids))
+                                        train_ids)
     # Sort
     train_ids.sort()
     valid_ids.sort()
@@ -332,9 +334,16 @@ if __name__ == '__main__':
     tqdm.write("Done!")
 
     tqdm.write("Define model...")
-    model = get_model(vars(args), len(dx), config_dict_pretrain_stage, ckpt_pretrain_stage)
-    if ckpt is not None:
-        model.load_state_dict(ckpt["model"])
+    ptrmdl, core_model, pred_stage = mdl
+    if ptrmdl is None:
+        pass
+    if core_model is None:
+        core_model = get_model(args.mdl_type, get_input_size(ptrmdl), args.seq_length, **vars(args))
+    if pred_stage is None:
+        pred_stage = get_prediction_stage(args.pred_stage_type, len(dx), args.net_seq_length[-1],
+                                          args.net_filter_size[-1], **vars(args))
+    model = get_full_model(ptrmdl, core_model, pred_stage, args.pretrain_output_size, freeze_ptrmdl=args.pretrain_freeze,
+                           freeze_core_model=args.mdl_freeze)
     model.to(device=device)
     tqdm.write("Done!")
 
@@ -419,11 +428,8 @@ if __name__ == '__main__':
         is_best_metric = best_challenge_metric < metrics['challenge_metric'] if metrics is not None else False
         # Save best model
         if (settings.save_last and (ep == args.epochs - 1)) or is_best_metric:
-            torch.save({'epoch': ep,
-                        'model': model.state_dict(),
-                        'optimizer': optimizer.state_dict(),
-                        'scheduler': scheduler.state_dict()},
-                       os.path.join(folder, 'model.pth'))
+            save_ckpt(folder, ep, model, optimizer, scheduler,
+                      save_ptrmdl=not args.pretrain_freeze, save_core_model=not args.mdl_freeze)
             if settings.save_logits:
                 save_logits(all_logits, ids, sub_ids, folder)
             tqdm.write("Save model!")
