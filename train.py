@@ -10,7 +10,7 @@ from data import *
 from utils import set_output_folder, check_pretrain_model, get_data_ids, \
     write_data_ids, get_model, GetMetrics, get_output_layer, \
     get_correction_factor, check_model, save_config, initialize_history, save_history, \
-    print_message, get_targets, update_history, save_logits
+    print_message, get_targets, update_history, save_logits, scale_by_number_of_predictions
 from outlayers import collapse, get_collapse_fun
 
 
@@ -107,7 +107,7 @@ def output_from_logits(out_layer, all_logits, batch_size, device):
 
 
 def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
-             classes, batch_size, combination_strategy, predict_before_collapse, device):
+             classes, batch_size, combination_strategy, predict_before_collapse, device, scales_n):
     y_score_torch = output_from_logits(out_layer, all_logits, batch_size, device)
     y_score_np = y_score_torch.numpy()
     # Correct for class imbalance
@@ -117,13 +117,16 @@ def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
                                     unique_ids=targets_ids)
     # Get zero one prediction
     if predict_before_collapse:
-        y_pred_not_collapsed = out_layer.get_prediction(y_score_corrected)
+        y_score_adjusted = scale_by_number_of_predictions(y_score_corrected, scales_n)
+        y_pred_not_collapsed = out_layer.get_prediction(y_score_adjusted)
         _, y_pred_collapsed = collapse(y_pred_not_collapsed, ids, fn=get_collapse_fun('max'),
                                       unique_ids=targets_ids)
     else:
-        y_pred_collapsed = out_layer.get_prediction(y_score_collapsed)
+        y_score_adjusted = scale_by_number_of_predictions(y_score_collapsed, scales_n)
+        y_pred_collapsed = out_layer.get_prediction(y_score_adjusted)
     y_pred = dx.prepare_target(y_pred_collapsed, classes)
     y_score = dx.prepare_probabilities(y_score_collapsed, classes)
+
     return y_pred, y_score
 
 
@@ -180,6 +183,8 @@ if __name__ == '__main__':
                                help='Compute the 0-1 predictions for each smaller section and collapse them'
                                     'afterwards. If not set, first collapse probabilities and, in a second moment,'
                                     'compute the predictions from the probabilities.')
+    config_parser.add_argument('--scale_by_n_predictions', type=float, nargs='+', default=[30, 1.0, 0.9, 0.9, 0.8, 0.7, 0],
+                               help='Multiply the first logit probability by')
     config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'linear'], default='linear',
                                help='type of prediction stage model: lstm, gru, rnn, linear. Default: linear.')
     config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
@@ -366,7 +371,7 @@ if __name__ == '__main__':
             # Evaluate
             y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
                                        valid_classes, args.valid_batch_size, args.combination_strategy,
-                                       args.predict_before_collapse, device)
+                                       args.predict_before_collapse, device, args.scale_by_n_predictions)
             # Compute metrics
             metrics = get_metrics(y_pred, y_score)
             return metrics

@@ -325,3 +325,19 @@ def save_logits(all_logits, ids, sub_ids, folder):
         index = pd.MultiIndex.from_tuples(list(zip(ids, sub_ids)), names=['ids', 'subids'])
         logits_df = pd.DataFrame(data=all_logits.numpy(), index=index)
         logits_df.to_csv(os.path.join(folder, 'logits.csv'))
+
+
+def scale_by_number_of_predictions(y_score, scale):
+    y_score = y_score.copy()
+    mask = np.zeros_like(y_score, dtype=bool)
+    for i, s in enumerate(scale[:-1]):
+        # Compute mask
+        mask_i = y_score >= np.sort(y_score, axis=-1)[:, -(i+1)][:, None]
+        modify_mask = mask_i & (~mask)
+        # Scale values
+        y_score[modify_mask] = y_score[modify_mask] * s
+        # update mask
+        mask = mask | mask_i
+    # Apply scale to remaing values
+    y_score[~mask] = y_score[~mask] * scale[-1]
+    return y_score
