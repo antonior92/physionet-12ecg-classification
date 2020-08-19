@@ -90,15 +90,9 @@ class DxMap(object):
                 indices.append(i)
         return indices, pairs_list
 
-    def prepare_target(self, target, classes=None):
-        target = np.array(target, dtype=int)
-        if classes is None:
-            indices = list(range(len(self.enc)))
-            pairs_list = [[p] for p in self.enc.pairs]
-        else:
-            indices, pairs_list = self._get_pairs(classes)
-
-        n_classes = len(classes) if classes is not None else len(indices)
+    def _prepare_target(self, target, indices, pairs_list, n_classes=None):
+        if n_classes is None:
+            n_classes = len(indices)
         new_target = np.zeros(list(target.shape[:-1]) + [n_classes], dtype=target.dtype)
         for i, pairs in zip(indices, pairs_list):
             # assign target from labels
@@ -107,6 +101,16 @@ class DxMap(object):
             for idx, subidx in pairs[1:]:
                 new_target[..., i] *= target[..., idx] == subidx
         return new_target
+
+    def prepare_target(self, target, classes=None):
+        target = np.array(target, dtype=int)
+        if classes is None:
+            indices = list(range(len(self.enc)))
+            pairs_list = [[p] for p in self.enc.pairs]
+        else:
+            indices, pairs_list = self._get_pairs(classes)
+        n_classes = len(classes) if classes is not None else len(indices)
+        return self._prepare_target(target, indices, pairs_list, n_classes)
 
     def prepare_probabilities(self, prob, classes):
         prob = np.array(prob, dtype=float)

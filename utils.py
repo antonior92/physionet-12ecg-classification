@@ -107,8 +107,10 @@ def get_correction_factor(dset, dx, expected_class_distribution):
     targets = np.vstack([dx.target_from_labels(sample['labels']) for sample in dset])
     dset.use_only_header(False)
     occurences = dx.prepare_target(targets)
+    null_pairs = [[(idx, dx.enc.null_targets[idx])] for idx, subidx in dx.enc.pairs]
+    null_ocurrences = dx._prepare_target(targets, range(occurences.shape[1]), null_pairs)
     n_occurences = occurences.sum(axis=0)
-    fraction = n_occurences / occurences.shape[0]
+    fraction = n_occurences / null_ocurrences.sum(axis=0)
     # Get occurences
     tqdm.write("\t frequencies = ocurrences / samples (for each abnormality)")
     tqdm.write("\t\t\t   = " + ', '.join(
