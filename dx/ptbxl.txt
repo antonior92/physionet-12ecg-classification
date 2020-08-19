@@ -1,0 +1,25 @@
+concat:softmax:2-softmax:5-softmax:2-softmax:3-softmax:2-sigmoid:9
+0->2/0->5/0->2/0->3/0->2/0->1/0->1/0->1/0->1/0->1/0->1/0->1/0->1/0->1
+39732003,0,1  # left axis deviation
+47665007,0,2  # right axis deviation
+426177001,1,1  # sinus bradycardia
+427084000,1,2  # sinus tachicardia
+164889003,1,3  # atrial fibrilation
+427393009,1,4  # sinus arrhythmia
+63593006,1,5  # supraventricular arrhythmia
+164890007,2,1  # atrial flutter
+284470004,2,2  # premature atrial contraction (#ALIAS: the same as supraventricular arrhythmia)
+713426002,3,1  # incomplete right bundle branch block
+164909002,3,2  # left bundle branch block
+713427006,3,3  # Complete right bundle block (#ALIAS: the same as RBBB)
+164947007,4,1  #  prolonged pr interval
+111975006,4,2  # Prolonged qt interval
+10370003,5,1  # Pacing rythm
+164917005,6,1  # Q wave abnormal
+164934002,7,1  # T wave abnormal
+59931005,8,1  # T wave inversion
+251146004,9,1  # low qrs voltages
+270492004,10,1  # 1st degree av block
+445118002,11,1  # left anterior fascicular block
+426783006,12,1  # sinus rhythm
+698252002,13,1  # nonspecific intraventricular conduction disorder
