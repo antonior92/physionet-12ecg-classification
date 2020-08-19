@@ -27,7 +27,8 @@ def run_12ECG_classifier(data, header_data, mdl):
     # Compute prediction and score
     y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, [ID],
                                classes, 1, config_dict['combination_strategy'],
-                               config_dict['predict_before_collapse'], device)
+                               config_dict['predict_before_collapse'], device,
+                               config_dict['scale_by_n_predictions'])
     return list(y_pred.flatten()), list(y_score.flatten()), classes
 
 
