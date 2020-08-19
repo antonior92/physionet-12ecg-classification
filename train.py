@@ -214,6 +214,10 @@ if __name__ == '__main__':
                                  "If 'train' consider the distribution observed in the training dataset."
                                  "The classifier will be corrected to account for this prior information"
                                  "on the distribution of the classes.")
+    sys_parser.add_argument('--max_correction_factor', type=float, default=30,
+                            help="maximum value allowed for the correction factor")
+    sys_parser.add_argument('--min_correction_factor', type=float, default=0,
+                            help="maximum value allowed for the correction factor")
     sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
@@ -320,6 +324,8 @@ if __name__ == '__main__':
     tqdm.write("Define  correction factor (for class imbalance) ...")
     if correction_factor is None:
         correction_factor = get_correction_factor(dset, dx, settings.expected_class_distribution)
+        correction_factor = np.maximum(np.minimum(correction_factor, settings.max_correction_factor),
+                                       settings.min_correction_factor)
         np.savetxt(os.path.join(folder, 'correction_factor.txt'), correction_factor, fmt='%.10f')
     else:
         tqdm.write("\tUsing pre-specified correction factor!")
