@@ -104,7 +104,7 @@ def output_from_logits(out_layer, all_logits, batch_size, device):
 
 
 def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
-             classes, batch_size, combination_strategy, predict_before_collapse, device):
+             classes, batch_size, combination_strategy, predict_before_collapse, device, scales_n):
     y_score_torch = output_from_logits(out_layer, all_logits, batch_size, device)
     y_score_np = y_score_torch.numpy()
     # Correct for class imbalance
@@ -114,13 +114,16 @@ def evaluate(ids, all_logits, out_layer, dx, correction_factor, targets_ids,
                                     unique_ids=targets_ids)
     # Get zero one prediction
     if predict_before_collapse:
-        y_pred_not_collapsed = out_layer.get_prediction(y_score_corrected)
+        y_score_adjusted = scale_by_number_of_predictions(y_score_corrected, scales_n)
+        y_pred_not_collapsed = out_layer.get_prediction(y_score_adjusted)
         _, y_pred_collapsed = collapse(y_pred_not_collapsed, ids, fn=get_collapse_fun('max'),
                                       unique_ids=targets_ids)
     else:
-        y_pred_collapsed = out_layer.get_prediction(y_score_collapsed)
+        y_score_adjusted = scale_by_number_of_predictions(y_score_collapsed, scales_n)
+        y_pred_collapsed = out_layer.get_prediction(y_score_adjusted)
     y_pred = dx.prepare_target(y_pred_collapsed, classes)
     y_score = dx.prepare_probabilities(y_score_collapsed, classes)
+
     return y_pred, y_score
 
 
@@ -177,6 +180,8 @@ if __name__ == '__main__':
                                help='Compute the 0-1 predictions for each smaller section and collapse them'
                                     'afterwards. If not set, first collapse probabilities and, in a second moment,'
                                     'compute the predictions from the probabilities.')
+    config_parser.add_argument('--scale_by_n_predictions', type=float, nargs='+', default=[30, 1.0, 0.9, 0.9, 0.8, 0.7, 0],
+                               help='Multiply the first logit probability by')
     config_parser.add_argument('--pred_stage_type', choices=['lstm', 'gru', 'rnn', 'linear'], default='linear',
                                help='type of prediction stage model: lstm, gru, rnn, linear. Default: linear.')
     config_parser.add_argument('--pred_stage_n_layer', type=int, default=1,
@@ -206,6 +211,10 @@ if __name__ == '__main__':
                                  "If 'train' consider the distribution observed in the training dataset."
                                  "The classifier will be corrected to account for this prior information"
                                  "on the distribution of the classes.")
+    sys_parser.add_argument('--max_correction_factor', type=float, default=30,
+                            help="maximum value allowed for the correction factor")
+    sys_parser.add_argument('--min_correction_factor', type=float, default=0,
+                            help="maximum value allowed for the correction factor")
     sys_parser.add_argument('--input_folder', type=str, default='Training_WFDB',
                             help='input folder.')
     sys_parser.add_argument('--dx', type=str, default='./dx',
@@ -325,6 +334,8 @@ if __name__ == '__main__':
     tqdm.write("Define  correction factor (for class imbalance) ...")
     if correction_factor is None:
         correction_factor = get_correction_factor(dset, dx, settings.expected_class_distribution)
+        correction_factor = np.maximum(np.minimum(correction_factor, settings.max_correction_factor),
+                                       settings.min_correction_factor)
         np.savetxt(os.path.join(folder, 'correction_factor.txt'), correction_factor, fmt='%.10f')
     else:
         tqdm.write("\tUsing pre-specified correction factor!")
@@ -383,7 +394,7 @@ if __name__ == '__main__':
             # Evaluate
             y_pred, y_score = evaluate(ids, all_logits, out_layer, dx, correction_factor, valid_ids,
                                        valid_classes, args.valid_batch_size, args.combination_strategy,
-                                       args.predict_before_collapse, device)
+                                       args.predict_before_collapse, device, args.scale_by_n_predictions)
             # Compute metrics
             metrics = get_metrics(y_pred, y_score)
             return metrics
