@@ -7,6 +7,10 @@ RUN mkdir /physionet
 COPY ./ /physionet
 WORKDIR /physionet
 
+RUN  apt-get update \
+  && apt-get install -y wget \
+  && rm -rf /var/lib/apt/lists/*
+
 # Load model pretrained weights
 RUN mkdir ./mdls
 # load mdl1 from folder complete_training_2 on dropbox
