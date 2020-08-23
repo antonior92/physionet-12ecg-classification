@@ -71,6 +71,11 @@ def load_12ECG_model(folder):
     else:
         list_mdls = []
         for subfolder in os.listdir(folder):
-            print('\t ' + subfolder)
-            list_mdls += [_load_12ECG_model(os.path.join(folder, subfolder))]
+            path = os.path.join(folder, subfolder)
+            if os.path.isdir(path):
+                try:
+                    print('\t ' + path)
+                    list_mdls += [_load_12ECG_model(path)]
+                except:
+                    pass
         return list_mdls

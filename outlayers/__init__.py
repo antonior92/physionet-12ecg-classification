@@ -1,5 +1,8 @@
 from .output_layers import SigmoidLayer, SoftmaxLayer, ReducedSoftmaxLayer, ConcatenatedLayer
-from .cvx_layers import CVXSoftmaxLayer
+try:
+    from .cvx_layers import CVXSoftmaxLayer
+except:
+    pass
 from .collapse import collapse, get_collapse_fun
 from .dx_map import DxMap
 
