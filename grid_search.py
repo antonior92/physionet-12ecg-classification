@@ -33,10 +33,12 @@ def execute(trial):
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
     pred_stage_type = trial.suggest_categorical('pred_stage_type',['lstm', 'gru', 'rnn','mean' ,'max'])
+    list_values = np.arange(0.5,0.9,0.1)
+
     if pred_stage_type in ('rnn','lstm','gru'):
         train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
             '--kernel_size {}'.format(trial.suggest_categorical('kernel_size', [9,15,17,35])), 
-            '--dropout_rate {}'.format(trial.suggest_loguniform('dropout_rate', 0.001, 1.0)),
+            '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
             '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
             '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
             '--pred_stage_type {}'.format(pred_stage_type),
@@ -45,7 +47,7 @@ def execute(trial):
     else:
         train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
-        '--dropout_rate {}'.format(trial.suggest_loguniform('dropout_rate', 0.001, 1.0)),
+        '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
         '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
         '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
         '--pred_stage_type {}'.format(pred_stage_type)
@@ -124,6 +126,7 @@ if __name__ == "__main__":
     print('\nBest study trial: ',study.best_trial)
     print('\nParams with the best results:',study.best_params)
     print('\nThe best value was:',study.best_value)
+    joblib.dump(study, 'study.pkl')
 pass
 
 #todo: 
