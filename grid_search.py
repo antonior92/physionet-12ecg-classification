@@ -33,7 +33,7 @@ def execute(trial):
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
     pred_stage_type = trial.suggest_categorical('pred_stage_type',['lstm', 'gru', 'rnn','mean' ,'max'])
-    list_values = np.arange(0.5,0.9,0.1)
+    list_values = [0.5,0.8,0.3,0]
 
     if pred_stage_type in ('rnn','lstm','gru'):
         train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
