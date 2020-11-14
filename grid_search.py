@@ -32,26 +32,34 @@ def execute(trial):
         '--dropout {}'.format(trial.suggest_float('pre_dropout_rate', 0.001, 1.0)),
         '--num_heads {}'.format(trial.suggest_int('pre_num_heads', 1, 11)))'''
     #train.py setup
-    pred_stage_type = trial.suggest_categorical('pred_stage_type',['lstm', 'gru', 'rnn','mean' ,'max'])
+    pred_stage_type = trial.suggest_categorical('pred_stage_type',['mean', 'max'])#['lstm', 'gru', 'rnn','mean' ,'max'])
     list_values = [0.5,0.8,0.3,0]
-
-    if pred_stage_type in ('rnn','lstm','gru'):
-        train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
-            '--kernel_size {}'.format(trial.suggest_categorical('kernel_size', [9,15,17,35])), 
-            '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
-            '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
-            '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
-            '--pred_stage_type {}'.format(pred_stage_type),
-            '--pred_stage_hidd {}'.format(trial.suggest_categorical('pred_stage_hidd',[30, 400, 800, 1200]))  
-            )
-    else:
-        train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
+    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
         '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
-        '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
-        '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
+        '--out_layer {}'.format('sigmoid')#trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
+        '--lr {}'.format(trial.suggest_categorical('lr',[0.05,0.01,0.005,0.001])),
         '--pred_stage_type {}'.format(pred_stage_type)
         )
+    #the commented code bellow was a initial test for the different kinds of output layers, we opted for using only the max and mean option
+    # if pred_stage_type in ('rnn','lstm','gru'):
+    #     train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
+    #         '--kernel_size {}'.format(trial.suggest_categorical('kernel_size', [9,15,17,35])), 
+    #         '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
+    #         '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
+    #         '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
+    #         '--pred_stage_type {}'.format(pred_stage_type),
+    #         '--pred_stage_hidd {}'.format(trial.suggest_categorical('pred_stage_hidd',[30, 400, 800, 1200]))  
+    #         )
+    # else:
+    #     train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
+    #     '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
+    #     '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
+    #     '--out_layer {}'.format(trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
+    #     '--lr {}'.format(trial.suggest_loguniform('lr',0.001,0.01)),
+    #     '--pred_stage_type {}'.format(pred_stage_type)
+    #     )
+
 
     #pretrain comand
     #pre_cmd = " ".join(pre_set_up)
@@ -130,12 +138,17 @@ if __name__ == "__main__":
 pass
 
 #todo: 
-
 #argparse para simplificar codigo
 #codigo não funciona quando a pasta grid search tem iterações antigas nela
+#pytorch 1.1 cuda olhar versão do cud a
+
 
 """
 Done:
+#colocar somente mean e max nas opçoes
+#colocar somente sigmoid
+#learning rate como categorico [0.05,0.01,0.005,0.001]
+
 #deletar modelos para não estourar memória
     #posso usar study.best_trial.number para remover modelo das pastas que não forem o best trial. Adicionar código na linha 53.
 figure how to wait until the csv file is complete to run the file (line 35) -> aparently os.system
