@@ -34,7 +34,7 @@ def execute(trial):
     #train.py setup
     pred_stage_type = trial.suggest_categorical('pred_stage_type',['mean', 'max'])#['lstm', 'gru', 'rnn','mean' ,'max'])
     list_values = [0.5,0.8,0.3,0]
-    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
+    train_set_up =('python train.py --cuda --valid_classes dset --train_classes dset --input_folder "/srv/danielmteixeira/Training_WFDB" --folder "{}/outputs_gridsearch/iteration{}"'.format(main_path,i),
         '--kernel_size {}'.format(trial.suggest_int('kernel_size', 3, 36)), 
         '--dropout_rate {}'.format(trial.suggest_categorical('dropout_rate', list_values)),
         '--out_layer {}'.format('sigmoid')#trial.suggest_categorical('out_layer',['sigmoid','softmax'])),
@@ -140,7 +140,7 @@ pass
 #todo: 
 #argparse para simplificar codigo
 #codigo não funciona quando a pasta grid search tem iterações antigas nela
-#pytorch 1.1 cuda olhar versão do cud a
+#mudar caminho para rodar na titan2
 
 
 """
@@ -148,6 +148,7 @@ Done:
 #colocar somente mean e max nas opçoes
 #colocar somente sigmoid
 #learning rate como categorico [0.05,0.01,0.005,0.001]
+#pytorch 1.1 cuda olhar versão do cuda -> 10.1  (TITAN2)
 
 #deletar modelos para não estourar memória
     #posso usar study.best_trial.number para remover modelo das pastas que não forem o best trial. Adicionar código na linha 53.
